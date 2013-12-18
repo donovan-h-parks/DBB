@@ -20,6 +20,7 @@
 import os
 import sys
 import logging
+import random
 import multiprocessing as mp
 from collections import defaultdict
 from operator import itemgetter
@@ -117,13 +118,10 @@ class Preprocess(object):
 
     def __workerThread(self, bamFile, contigs, genomicSig, minSeqLen, percent, blockSize, queueIn, queueOut):
         """Process each data item in parallel."""
-
         while True:
             contigIds, contigLens = queueIn.get(block=True, timeout=None)
             if contigIds == None:
                 break
-                
-            print 'Contigs to process: ' + str(len(contigIds))
 
             bamfile = pysam.Samfile(bamFile, 'rb')
 
@@ -156,9 +154,18 @@ class Preprocess(object):
                     
                 while contigLen >= 4*testLen:
                     numTestPts = contigLen/testLen
+                    
+                    perErrors = []
                     for i in xrange(0, numTestPts):
                         testCoverage = np.mean(readLoader.coverage[testLen*i:testLen*(i+1)])
-                        covDist[testLen].append( (testCoverage - contigCoverage)*100.0 / contigCoverage)
+                        perErrors.append( (testCoverage - contigCoverage)*100.0 / contigCoverage)
+                        
+                    # limit contribution of any sequences to the coverage distribution, and
+                    # ensure the number of test points over all sequences is kept to a reasonble number
+                    if numTestPts > 1000:
+                        covDist[testLen] = random.sample(perErrors, 1000)
+                    else:
+                        covDist[testLen] = perErrors
                       
                     testLen = int(testLen + testLen*percent)
 
@@ -170,12 +177,8 @@ class Preprocess(object):
                 queueOut.put((contigId, contigSeqStats, partitionSeqStats, readMappingStats, covDist))
 
             bamfile.close()
-            
-        print '--------------------------Queue size: ' + str(queueOut.qsize())
-        print '---------------------------worker done: ' + str(self.threadCount.value)
-        self.threadCount.value += 1
 
-    def __writerThread(self, genomicSig, globalCovDist, contigSeqStatsFile, contigTetraSigFile, partitionSeqStatsFile, partitionTetraSigFile, numRefSeqs, writerQueue):
+    def __writerThread(self, genomicSig, covDistFile, contigSeqStatsFile, contigTetraSigFile, partitionSeqStatsFile, partitionTetraSigFile, numRefSeqs, writerQueue):
         """Store or write results of worker threads in a single thread."""
         contigStatsOut = open(contigSeqStatsFile, 'w')
         contigStatsOut.write('Contig Id\tLength\tGC\tCoverage (mean depth)\tMapped reads\n')
@@ -205,16 +208,16 @@ class Preprocess(object):
         totalMappedReads = 0
 
         processedRefSeqs = 0
+        
+        globalCovDist = defaultdict(list)
+        
         while True:
             contigId, contigSeqStats, partitionSeqStats, readMappingStats, covDist = writerQueue.get(block=True, timeout=None)
             if contigId == None:
                 break
             
             for testLen, testPts in covDist.iteritems():
-                if testLen in globalCovDist:
-                    globalCovDist[testLen] = globalCovDist[testLen] + testPts
-                else:
-                    globalCovDist[testLen] = testPts
+                globalCovDist[testLen].extend(testPts)
 
             if self.logger.getEffectiveLevel() <= logging.INFO:
                 processedRefSeqs += 1
@@ -267,6 +270,27 @@ class Preprocess(object):
         partitionStatsOut.close()
         partitionTetraSigOut.close()
         
+        self.__calculateCoverageDistribution(globalCovDist, covDistFile)
+        
+    def __calculateCoverageDistribution(self, covDist, covDistFile):
+        # calculate coverage distribution parameters for all test lengths
+        # with more than 100 test points
+        self.logger.info('')
+        self.logger.info('  Calculating coverage distribution parameters.')
+        t = {}
+        for testLen in covDist.keys():
+            testPts = covDist[testLen]
+            if len(testPts) > 100:
+                t[testLen] = {}
+                for percentile in np.arange(0, 100+0.5, 0.5):
+                    t[testLen][percentile] = np.percentile(testPts, percentile)
+                    
+        covDistOut = open(covDistFile, 'w')
+        covDistOut.write(str(t))  
+        covDistOut.close()
+        
+        self.logger.info('    Min. distribution length: %d, max. distribution length: %d' % (min(t.keys()), max(t.keys())))
+        
     def run(self, contigFile, bamFile, minSeqLen, percent, blockSize, numThreads, outputDir):
         checkFileExists(contigFile)
         checkFileExists(bamFile)
@@ -298,8 +322,8 @@ class Preprocess(object):
         # Note: to distribute the work load in a reasonably even manner
         # reference sequences are added in desending order of size and 
         # to the reference list with the fewest total base pairs
-        refSeqLists = [[] for _ in range(numThreads*32)]
-        refLenLists = [[] for _ in range(numThreads*32)]
+        refSeqLists = [[] for _ in range(numThreads)]
+        refLenLists = [[] for _ in range(numThreads)]
 
         filteredRefSeqs.sort(key=itemgetter(1), reverse=True)   # sort in descending order of size
         
@@ -317,20 +341,18 @@ class Preprocess(object):
             workerQueue.put((None, None))
 
         gs = GenomicSignatures(4, 1)
-        
-        self.threadCount = mp.Value('i', 0)
-        
+
         self.logger.info('')
         self.logger.info('  Processing reference sequences.')
         workerProc = [mp.Process(target = self.__workerThread, args = (bamFile, contigs, gs, minSeqLen, percent, blockSize, workerQueue, writerQueue)) for _ in range(numThreads)]
         
+        covDistFile = os.path.join(outputDir, 'coverage_dist.txt') 
         contigSeqStatFile = os.path.join(outputDir, 'contigs.seq_stats.tsv')
         contigTetraSigFile = os.path.join(outputDir, 'contigs.tetra.tsv') 
         partitionSeqStatFile = os.path.join(outputDir, 'partitions.seq_stats.tsv')  
         partitionTetraSigFile = os.path.join(outputDir, 'partitions.tetra.tsv')   
         
-        covDist = mp.Manager().dict()
-        writeProc = mp.Process(target = self.__writerThread, args = (gs, covDist, contigSeqStatFile, contigTetraSigFile, partitionSeqStatFile, partitionTetraSigFile, len(filteredRefSeqs), writerQueue))
+        writeProc = mp.Process(target = self.__writerThread, args = (gs, covDistFile, contigSeqStatFile, contigTetraSigFile, partitionSeqStatFile, partitionTetraSigFile, len(filteredRefSeqs), writerQueue))
 
         writeProc.start()
 
@@ -343,25 +365,6 @@ class Preprocess(object):
         writerQueue.put((None, None, None, None, None))
         writeProc.join()
         
-        # calculate coverage distribution parameters for all test lengths
-        # with more than 100 test points
-        self.logger.info('')
-        self.logger.info('  Calculating coverage distribution parameters.')
-        t = {}
-        for testLen in covDist.keys():
-            testPts = covDist[testLen]
-            if len(testPts) > 100:
-                t[testLen] = {}
-                for percentile in np.arange(0, 100+0.5, 0.5):
-                    t[testLen][percentile] = np.percentile(testPts, percentile)
-                    
-        covDistFile = os.path.join(outputDir, 'coverage_dist.txt') 
-        covDistOut = open(covDistFile, 'w')
-        covDistOut.write(str(t))  
-        covDistOut.close()
-        
-        self.logger.info('    Min. distribution length: %d, max. distribution length: %d' % (min(t.keys()), max(t.keys())))
-    
         # report calculate parameters and statistics
         self.logger.info('')
         self.logger.info('  Contig statistics written to: ' + contigSeqStatFile)
