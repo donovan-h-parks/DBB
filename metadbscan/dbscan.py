@@ -49,7 +49,8 @@ from tdNeighbours import TdNeighbours
 def readSeqStatsForClusters(binningFile):
     seqStatsForClusters = defaultdict(list)
     with open(binningFile) as f:
-        f.readline()
+        f.readline() # parameter line 
+        f.readline() # header line
         for line in f:
             lineSplit = line.split('\t')
             clusterId = DBSCAN.NOISE if lineSplit[1] == 'unbinned' else int(lineSplit[1])
@@ -169,7 +170,7 @@ class DBSCAN(object):
         self.logger.info('    - %d of %d (%.2f%%) partitioned contigs completely within a single bin' % (rc.numProperBin, rc.numPartitionedSeqs, rc.numProperBin*100.0/rc.numPartitionedSeqs))
         self.logger.info('    - %d of %d (%.2f%%) partitioned contigs were completely unbinned' % (rc.numNoise, rc.numPartitionedSeqs, rc.numNoise*100.0/rc.numPartitionedSeqs))
         
-        self.logger.info('    - %d of %d (%.2f%%) partitioned contigs were at least partially unbinned' % (rc.numPartialNoise, rc.numPartitionedSeqs, rc.numPartialNoise*100.0/rc.numPartitionedSeqs))
+        self.logger.info('    - %d of %d (%.2f%%) partitioned contigs were partially unbinned' % (rc.numPartialNoise, rc.numPartitionedSeqs, rc.numPartialNoise*100.0/rc.numPartitionedSeqs))
         self.logger.info('      - %d (%.2f%%) resolved by reassignment to a single bin' % (rc.numPartialReassignment, rc.numPartialReassignment*100.0/max(rc.numPartialNoise, 1)))
         self.logger.info('      - %d (%.2f%%) resolved by marking all partitions as noise' % (rc.numPartialToNoise, rc.numPartialToNoise*100.0/max(rc.numPartialNoise, 1)))
          
@@ -195,7 +196,7 @@ class DBSCAN(object):
         self.logger.info('    - %d of %d (%.2f%%) partitioned scaffolds completely within a single bin' % (rc.numProperBin, rc.numPartitionedSeqs, rc.numProperBin*100.0/rc.numPartitionedSeqs))
         self.logger.info('    - %d of %d (%.2f%%) partitioned scaffolds were completely unbinned' % (rc.numNoise, rc.numPartitionedSeqs, rc.numNoise*100.0/rc.numPartitionedSeqs))
         
-        self.logger.info('    - %d of %d (%.2f%%) partitioned scaffolds were at least partially unbinned' % (rc.numPartialNoise, rc.numPartitionedSeqs, rc.numPartialNoise*100.0/rc.numPartitionedSeqs))
+        self.logger.info('    - %d of %d (%.2f%%) partitioned scaffolds were partially unbinned' % (rc.numPartialNoise, rc.numPartitionedSeqs, rc.numPartialNoise*100.0/rc.numPartitionedSeqs))
         self.logger.info('      - %d (%.2f%%) resolved by reassignment to a single bin' % (rc.numPartialReassignment, rc.numPartialReassignment*100.0/max(rc.numPartialNoise, 1)))
         self.logger.info('      - %d (%.2f%%) resolved by marking all partitions as noise' % (rc.numPartialToNoise, rc.numPartialToNoise*100.0/max(rc.numPartialNoise, 1)))
         
@@ -203,7 +204,7 @@ class DBSCAN(object):
         self.logger.info('      - %d (%.2f%%) resolved by reassignment to a single bin' % (rc.numConflictsReassignment, rc.numConflictsReassignment*100.0/max(rc.numConflicts, 1)))
         self.logger.info('      - %d (%.2f%%) resolved by marking all partitions as noise' % (rc.numConflictsToNoise, rc.numConflictsToNoise*100.0/max(rc.numConflicts, 1)))
           
-    def __reportClusters(self, binningFile, contigStats):
+    def __reportClusters(self, binningFile, contigStats, argsStr):
         # get partitions in each cluster
         clusters = defaultdict(list)
         for seq in self.sortedSeqs:
@@ -227,7 +228,7 @@ class DBSCAN(object):
                 clusterIdToContigIds[i].add(contigId)
                 
             if i != DBSCAN.NOISE:
-                self.logger.info('    Contigs in bin %d: %d (%.2f Mbp)' % (i, len(clusterIdToContigIds[i]), float(clusterSizeBP)/1e6))
+                self.logger.info('    Bin %d: %d contigs (%.2f Mbp)' % (i, len(clusterIdToContigIds[i]), float(clusterSizeBP)/1e6))
                 
         totalClusteredContigs = sum([len(contigIds) for clusterId, contigIds in clusterIdToContigIds.iteritems() if clusterId != DBSCAN.NOISE])
            
@@ -237,6 +238,7 @@ class DBSCAN(object):
         
         # save clustering to file
         fout = open(binningFile, 'w')
+        fout.write('# ' + argsStr + '\n')
         fout.write('Contig Id\tCluster Id\tLength\tGC\tCoverage\n')
         for clusterId, contigIds in clusterIdToContigIds.iteritems():
             clusterName = str(clusterId) if clusterId != DBSCAN.NOISE else 'unbinned'
@@ -250,7 +252,7 @@ class DBSCAN(object):
         self.logger.info('')
         self.logger.info('    Binning information written to: ' + binningFile)
                
-    def run(self, preprocessDir, minSeqLen, minBinSize, gcDistPer, tdDistPer, covDistPer, minPts, minCoreLen, numThreads, binningFile):
+    def run(self, preprocessDir, minSeqLen, minBinSize, gcDistPer, tdDistPer, covDistPer, minPts, minCoreLen, numThreads, binningFile, argsStr):
         # verify inputs
         seqStatsFile = os.path.join(preprocessDir, 'partitions.seq_stats.tsv')
         checkFileExists(seqStatsFile)
@@ -265,7 +267,7 @@ class DBSCAN(object):
         checkFileExists(contigStatsFile)
 
         # create sequence
-        self.logger.info('  Reading partitioned contig statistics.')
+        self.logger.info('  Reading statistics of partitioned contigs.')
         self.sortedSeqs = []
         self.seqIdsOfInterest = set()
         numPotentialCores = 0
@@ -289,12 +291,12 @@ class DBSCAN(object):
                     if seqLen > minCoreLen:
                         numPotentialCores += 1
                     
-        self.logger.info('    Partitioned contig > %d bps: %d' % (minSeqLen, len(self.sortedSeqs)))
-        self.logger.info('    Potential cores (partitioned contig > %d bps): %d' % (minCoreLen, numPotentialCores))
+        self.logger.info('    Partitioned contigs > %d bps: %d' % (minSeqLen, len(self.sortedSeqs)))
+        self.logger.info('    Potential cores (partitioned contigs > %d bps): %d' % (minCoreLen, numPotentialCores))
         
         # sort sequences in ascending order of length
         self.logger.info('')
-        self.logger.info('  Sorting partitioned contig in ascending order of length.')
+        self.logger.info('  Sorting partitioned contigs in ascending order of length.')
         self.sortedSeqs.sort(key=lambda x: x.seqLen, reverse=True)
                 
         # read GC, TD and coverage distributions
@@ -339,12 +341,13 @@ class DBSCAN(object):
         # and from which there is limited data too calculate robust statistics
         self.logger.info('')
         self.logger.info('  Filtering bins with < %d bps.' % minBinSize)
+        preClusters = self.numClusters
         self.__filterBins(minBinSize)
-        self.logger.info('    Retained %d bins.' % self.numClusters)
+        self.logger.info('    Retained %d of %d (%.2f%%) bins.' % (self.numClusters, preClusters, self.numClusters*100.0/preClusters))
         
         # report and save results of binning
         self.logger.info('')
         self.logger.info('  Core bins:')
         contigStats = readSeqStats(contigStatsFile)
-        self.__reportClusters(binningFile, contigStats)
+        self.__reportClusters(binningFile, contigStats, argsStr)
         

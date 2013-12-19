@@ -72,30 +72,36 @@ class MetaDBSCAN(object):
             self.logger.warning('  [Warning] Specified output path must be empty: ' + args.output_dir + '\n')
             sys.exit()
   
+        argsStr = '\n'.join(map(str.strip, str(args).replace('Namespace(', '').replace(')', '').split(',')))
+  
         preprocess = Preprocess()
-        preprocess.run(args.contig_file, args.bam_file, args.min_seq_len, args.percent, args.block_size, args.threads, args.output_dir)
+        preprocess.run(args.contig_file, args.bam_file, args.min_seq_len, args.percent, args.block_size, args.threads, args.output_dir, argsStr)
    
         self.timeKeeper.printTimeStamp()  
         
     def bin(self, args):
         self.logger.info('')
         self.logger.info('*******************************************************************************')
-        self.logger.info(' [MetaDBSCAN - bin] Bin contig partitions.')
+        self.logger.info(' [MetaDBSCAN - bin] Bin contig partitions into cores.')
         self.logger.info('*******************************************************************************')
         
+        argsStr = ', '.join(map(str.strip, str(args).replace('Namespace(', '').replace(')', '').split(',')))
+        
         dbscan = DBSCAN()
-        dbscan.run(args.preprocess_dir, args.min_seq_len, args.min_bin_size, args.gc_dist_per, args.td_dist_per, args.cov_dist_per, args.min_pts, args.min_core_len, args.threads, args.binning_file)
+        dbscan.run(args.preprocess_dir, args.min_seq_len, args.min_bin_size, args.gc_dist_per, args.td_dist_per, args.cov_dist_per, args.min_pts, args.min_core_len, args.threads, args.binning_file, argsStr)
             
         self.timeKeeper.printTimeStamp() 
         
     def refine(self, args):
         self.logger.info('')
         self.logger.info('*******************************************************************************')
-        self.logger.info(' [MetaDBSCAN - refine] Refine bins.')
+        self.logger.info(' [MetaDBSCAN - refine] Refine core bins.')
         self.logger.info('*******************************************************************************')
         
+        argsStr = ', '.join(map(str.strip, str(args).replace('Namespace(', '').replace(')', '').split(',')))
+        
         refineBins = RefineBins()
-        refineBins.run(args.preprocess_dir, args.binning_file, args.min_seq_len, args.gc_dist_per, args.td_dist_per, args.cov_dist_per, args.refined_bin_file)
+        refineBins.run(args.preprocess_dir, args.binning_file, args.min_seq_len, args.gc_dist_per, args.td_dist_per, args.cov_dist_per, args.refined_bin_file, argsStr)
             
         self.timeKeeper.printTimeStamp() 
         
@@ -105,7 +111,7 @@ class MetaDBSCAN(object):
         self.logger.info(' [MetaDBSCAN - extract] Extract scaffolds into population genome bins.')
         self.logger.info('*******************************************************************************')
         
-        self.logger.info('  Extracting scaffolds assigned to each bin.')
+        self.logger.info('  Extracting scaffolds assigned to bins.')
         extractScaffolds = ExtractScaffolds()
         extractScaffolds.run(args.scaffold_file, args.binning_file, args.bin_dir)
         

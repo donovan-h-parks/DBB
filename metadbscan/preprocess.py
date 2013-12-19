@@ -178,7 +178,7 @@ class Preprocess(object):
 
             bamfile.close()
 
-    def __writerThread(self, genomicSig, covDistFile, contigSeqStatsFile, contigTetraSigFile, partitionSeqStatsFile, partitionTetraSigFile, numRefSeqs, writerQueue):
+    def __writerThread(self, genomicSig, blockSize, covDistFile, contigSeqStatsFile, contigTetraSigFile, partitionSeqStatsFile, partitionTetraSigFile, numRefSeqs, writerQueue):
         """Store or write results of worker threads in a single thread."""
         contigStatsOut = open(contigSeqStatsFile, 'w')
         contigStatsOut.write('Contig Id\tLength\tGC\tCoverage (mean depth)\tMapped reads\n')
@@ -208,6 +208,7 @@ class Preprocess(object):
         totalMappedReads = 0
 
         processedRefSeqs = 0
+        processedPartitions = 0
         
         globalCovDist = defaultdict(list)
         
@@ -242,6 +243,7 @@ class Preprocess(object):
             contigTetraSigOut.write('\n')
             
             for partitionId, partitionStats in partitionSeqStats.iteritems():
+                processedPartitions += 1
                 partitionStatsOut.write(partitionId + '\t' + str(partitionStats[0]))
                 partitionStatsOut.write('\t' + str(partitionStats[1]) + '\t' + str(partitionStats[2]) + '\n')
                 
@@ -264,6 +266,10 @@ class Preprocess(object):
             print '      # reads failing alignment length: %d (%.1f%%)' % (totalFailedAlignLen, float(totalFailedAlignLen)*100/totalReads)
             print '      # reads failing edit distance: %d (%.1f%%)' % (totalFailedEditDist, float(totalFailedEditDist)*100/totalReads)
             print '      # reads not properly paired: %d (%.1f%%)' % (totalFailedProperPair, float(totalFailedProperPair)*100/totalReads)
+            
+            print ''
+            print '  Contigs longer than %d bp were partitioned.' % blockSize
+            print '    Total sequences after partitioning: %d' % processedPartitions
 
         contigStatsOut.close()
         contigTetraSigOut.close()
@@ -271,7 +277,7 @@ class Preprocess(object):
         partitionTetraSigOut.close()
         
         self.__calculateCoverageDistribution(globalCovDist, covDistFile)
-        
+
     def __calculateCoverageDistribution(self, covDist, covDistFile):
         # calculate coverage distribution parameters for all test lengths
         # with more than 100 test points
@@ -291,7 +297,7 @@ class Preprocess(object):
         
         self.logger.info('    Min. distribution length: %d, max. distribution length: %d' % (min(t.keys()), max(t.keys())))
         
-    def run(self, contigFile, bamFile, minSeqLen, percent, blockSize, numThreads, outputDir):
+    def run(self, contigFile, bamFile, minSeqLen, percent, blockSize, numThreads, outputDir, argsStr):
         checkFileExists(contigFile)
         checkFileExists(bamFile)
         
@@ -343,7 +349,7 @@ class Preprocess(object):
         gs = GenomicSignatures(4, 1)
 
         self.logger.info('')
-        self.logger.info('  Processing reference sequences.')
+        self.logger.info('  Processing reference contigs.')
         workerProc = [mp.Process(target = self.__workerThread, args = (bamFile, contigs, gs, minSeqLen, percent, blockSize, workerQueue, writerQueue)) for _ in range(numThreads)]
         
         covDistFile = os.path.join(outputDir, 'coverage_dist.txt') 
@@ -352,7 +358,7 @@ class Preprocess(object):
         partitionSeqStatFile = os.path.join(outputDir, 'partitions.seq_stats.tsv')  
         partitionTetraSigFile = os.path.join(outputDir, 'partitions.tetra.tsv')   
         
-        writeProc = mp.Process(target = self.__writerThread, args = (gs, covDistFile, contigSeqStatFile, contigTetraSigFile, partitionSeqStatFile, partitionTetraSigFile, len(filteredRefSeqs), writerQueue))
+        writeProc = mp.Process(target = self.__writerThread, args = (gs, blockSize, covDistFile, contigSeqStatFile, contigTetraSigFile, partitionSeqStatFile, partitionTetraSigFile, len(filteredRefSeqs), writerQueue))
 
         writeProc.start()
 
@@ -372,3 +378,10 @@ class Preprocess(object):
         self.logger.info('  Partition statistics written to: ' + partitionSeqStatFile)
         self.logger.info('  Tetranucleotide signatures for partitions written to: ' + partitionTetraSigFile)
         self.logger.info('  Coverage distribution parameters written to: ' + covDistFile)
+        
+        # write command line arguments to file
+        # write arguments to file
+        parameterFile = os.path.join(outputDir, 'parameters.txt')
+        fout = open(parameterFile, 'w')
+        fout.write(argsStr)
+        fout.close()

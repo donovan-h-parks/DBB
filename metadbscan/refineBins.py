@@ -18,6 +18,7 @@
 ###############################################################################
 
 import os
+import sys
 import ast
 import logging
 import re
@@ -72,10 +73,16 @@ class RefineBins(object):
         numFailingDistanceTest = 0
         assignedBP = 0
         unassignedBP = 0
-        for unbinnedContig in unbinnedContigs:
+        for processedSeqs, unbinnedContig in enumerate(unbinnedContigs):
             # find closest core in GC, TD, and coverage space
             closestCluster = [None]*3
             minDistances = [1e9]*3
+            
+            if self.logger.getEffectiveLevel() <= logging.INFO:
+                processedSeqs += 1
+                statusStr = '    Processed %d of %d (%.2f%%) unbinned contigs.' % (processedSeqs, len(unbinnedContigs), float(processedSeqs)*100/len(unbinnedContigs))
+                sys.stdout.write('%s\r' % statusStr)
+                sys.stdout.flush()
 
             for clusterId, core in cores.iteritems():
                 if not self.__withinDistGC(gcDist, unbinnedContig, core):
@@ -110,6 +117,11 @@ class RefineBins(object):
                 numInvalidWithAllCores += 1
                 unassignedBP += unbinnedContig.seqLen
                 
+        if self.logger.getEffectiveLevel() <= logging.INFO:
+            statusStr = '    Processed %d of %d (%.2f%%) unbinned contigs.' % (processedSeqs, len(unbinnedContigs), float(processedSeqs)*100/len(unbinnedContigs))
+            sys.stdout.write('%s\n' % statusStr)
+            sys.stdout.flush()
+                
         numUnassigned = len(unbinnedContigs)-numAssigned
         self.logger.info('    Assigned %d of %d (%.2f%%) unbinned contigs to a core bin.' % (numAssigned, len(unbinnedContigs), numAssigned*100.0/len(unbinnedContigs)))
         self.logger.info('      - %d of %d (%.2f%%) unassigned contigs were invalid with all cores' % (numInvalidWithAllCores, numUnassigned, numInvalidWithAllCores*100.0/numUnassigned))
@@ -134,7 +146,7 @@ class RefineBins(object):
         self.logger.info('    - %d of %d (%.2f%%) partitioned scaffolds completely within a single bin' % (rc.numProperBin, rc.numPartitionedSeqs, rc.numProperBin*100.0/rc.numPartitionedSeqs))
         self.logger.info('    - %d of %d (%.2f%%) partitioned scaffolds were completely unbinned' % (rc.numNoise, rc.numPartitionedSeqs, rc.numNoise*100.0/rc.numPartitionedSeqs))
         
-        self.logger.info('    - %d of %d (%.2f%%) partitioned scaffolds were at least partially unbinned' % (rc.numPartialNoise, rc.numPartitionedSeqs, rc.numPartialNoise*100.0/rc.numPartitionedSeqs))
+        self.logger.info('    - %d of %d (%.2f%%) partitioned scaffolds were partially unbinned' % (rc.numPartialNoise, rc.numPartitionedSeqs, rc.numPartialNoise*100.0/rc.numPartitionedSeqs))
         self.logger.info('      - %d (%.2f%%) resolved by reassignment to a single bin' % (rc.numPartialReassignment, rc.numPartialReassignment*100.0/max(rc.numPartialNoise, 1)))
         self.logger.info('      - %d (%.2f%%) resolved by marking all partitions as noise' % (rc.numPartialToNoise, rc.numPartialToNoise*100.0/max(rc.numPartialNoise, 1)))
         
@@ -142,7 +154,7 @@ class RefineBins(object):
         self.logger.info('      - %d (%.2f%%) resolved by reassignment to a single bin' % (rc.numConflictsReassignment, rc.numConflictsReassignment*100.0/max(rc.numConflicts, 1)))
         self.logger.info('      - %d (%.2f%%) resolved by marking all partitions as noise' % (rc.numConflictsToNoise, rc.numConflictsToNoise*100.0/max(rc.numConflicts, 1)))
 
-    def __reportClusters(self, refinedBinFile, unbinnedContigs, binnedContigs):
+    def __reportClusters(self, refinedBinFile, unbinnedContigs, binnedContigs, argStr):
         # determine contigs in each cluster
         clusterIdToContigs = defaultdict(set)
         for contig in unbinnedContigs:
@@ -175,6 +187,7 @@ class RefineBins(object):
         
         # save clustering to file
         fout = open(refinedBinFile, 'w')
+        fout.write('# ' + argStr + '\n')
         fout.write('Contig Id\tCluster Id\tLength\tGC\tCoverage\n')
         for contigId, contigs in clusterIdToContigs.iteritems():
             for contig in contigs:
@@ -188,7 +201,7 @@ class RefineBins(object):
         self.logger.info('')
         self.logger.info('    Binning information written to: ' + refinedBinFile)
                
-    def run(self, preprocessDir, binningFile, minSeqLen, gcDistPer, tdDistPer, covDistPer, refinedBinFile):
+    def run(self, preprocessDir, binningFile, minSeqLen, gcDistPer, tdDistPer, covDistPer, refinedBinFile, argStr):
         # verify inputs
         contigStatsFile = os.path.join(preprocessDir, 'contigs.seq_stats.tsv')
         checkFileExists(contigStatsFile)
@@ -209,10 +222,11 @@ class RefineBins(object):
         tetraSigs = genomicSig.read(contigTetraFile)
         
         # read bin assignments
-        self.logger.info('  Reading bin assignments.')
+        self.logger.info('  Reading core bin assignments.')
         contigIdToClusterId = {}
         with open(binningFile) as f:
-            f.readline()
+            f.readline() # parameter line 
+            f.readline() # header line
             for line in f:
                 lineSplit = line.split('\t')
                 clusterId = DBSCAN.NOISE if lineSplit[1] == 'unbinned' else int(lineSplit[1])
@@ -281,5 +295,5 @@ class RefineBins(object):
         # report and save results of binning
         self.logger.info('')
         self.logger.info('  Refined bins:')
-        self.__reportClusters(refinedBinFile, unbinnedContigs, binnedContigs)
+        self.__reportClusters(refinedBinFile, unbinnedContigs, binnedContigs, argStr)
         
