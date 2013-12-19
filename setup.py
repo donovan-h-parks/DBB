@@ -7,6 +7,7 @@ setup(
     author_email='donovan.parks@gmail.com',
     packages=['metadbscan', 'metadbscan.plots'],
     scripts=['bin/metadbscan'],
+    package_data={'': ['data/*.txt']},
     url='http://pypi.python.org/pypi/metadbscan/',
     license='GPL3',
     description='Bin contigs into population genomes.',

@@ -31,11 +31,16 @@ class CoverageNeighbours(object):
 
     def __workerThread(self, seqs, covDist, covDistPer, queueIn, queueOut):
         """Process each data item in parallel."""
+        
+        d = covDist[covDist.keys()[0]]
+        lowerBoundKey = findNearest(d.keys(), (100 - covDistPer)/2.0)
+        upperBoundKey = findNearest(d.keys(), (100 + covDistPer)/2.0)
+            
         while True:
             index, seqI = queueIn.get(block=True, timeout=None)
             if index == None:
                 break
-            
+
             row = np.zeros(len(seqs))
             for j, seqJ in enumerate(seqs):
                 if seqI.seqLen > seqJ.seqLen:
@@ -48,8 +53,11 @@ class CoverageNeighbours(object):
                     seqLen = seqI.seqLen
 
                 closestSeqLen = findNearest(covDist.keys(), seqLen)
-                lowerBound = covDist[closestSeqLen][int((100 - covDistPer)/2)]
-                upperBound = covDist[closestSeqLen][int((100 + covDistPer)/2)]
+
+                d = covDist[closestSeqLen]
+                lowerBound = d[lowerBoundKey]
+                upperBound = d[upperBoundKey]
+
                 if inRange(covPerDiff, lowerBound, upperBound):
                     row[j] = 1
                   

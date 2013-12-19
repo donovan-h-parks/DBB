@@ -81,9 +81,9 @@ if __name__ == '__main__':
     bin_parser.add_argument('preprocess_dir', help='directory containing results of preprocess command')
     bin_parser.add_argument('binning_file', help='output file specifying bin of each contig partition')
 
-    bin_parser.add_argument('--gc_dist_per', help='width of GC distribution for defining contigs neighbours', choices=['80', '90', '95', '98', '99', '99.5', '99.9', '100'], default='90')
-    bin_parser.add_argument('--td_dist_per', help='width of TD distribution for defining contigs neighbours', choices=['80', '90', '95', '98', '99', '99.5', '99.9', '100'], default='90')
-    bin_parser.add_argument('--cov_dist_per', help='width of coverage distribution for defining contigs neighbours', type=int, choices=[80, 90, 95, 98, 99, 100], default=90)
+    bin_parser.add_argument('--gc_dist_per', help='width of GC distribution for defining contigs neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=90, metavar='')
+    bin_parser.add_argument('--td_dist_per', help='width of TD distribution for defining contigs neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=90, metavar='')
+    bin_parser.add_argument('--cov_dist_per', help='width of coverage distribution for defining contigs neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=90, metavar='')
     
     bin_parser.add_argument('-m', '--min_pts', help='minimum neighbours to define a contigs as a core sequence', type = int, default = 10)
     bin_parser.add_argument('-c', '--min_core_len', help='minimum sequence length to be define as a core sequence', type = int, default = 10000)
@@ -101,9 +101,9 @@ if __name__ == '__main__':
     refine_parser.add_argument('binning_file', help='file specifying initial core bins')
     refine_parser.add_argument('refined_bin_file', help='output file specifying refined bins')
 
-    refine_parser.add_argument('--gc_dist_per', help='width of GC distribution for defining contigs neighbours', choices=['80', '90', '95', '98', '99', '99.5', '99.9', '100'], default='98')
-    refine_parser.add_argument('--td_dist_per', help='width of TD distribution for defining contigs neighbours', choices=['80', '90', '95', '98', '99', '99.5', '99.9', '100'], default='98')
-    refine_parser.add_argument('--cov_dist_per', help='width of coverage distribution for defining contigs neighbours', type=int, choices=[80, 85, 90, 95, 97, 98, 99], default=98)
+    refine_parser.add_argument('--gc_dist_per', help='width of GC distribution for defining contigs neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    refine_parser.add_argument('--td_dist_per', help='width of TD distribution for defining contigs neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    refine_parser.add_argument('--cov_dist_per', help='width of coverage distribution for defining contigs neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
 
     refine_parser.add_argument('-s', '--min_seq_len', help='filter out unbinned contigs below this length', type = int, default = 1000)
 

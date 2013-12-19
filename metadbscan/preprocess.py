@@ -288,8 +288,11 @@ class Preprocess(object):
             testPts = covDist[testLen]
             if len(testPts) > 100:
                 t[testLen] = {}
-                for percentile in np.arange(0, 100+0.5, 0.5):
-                    t[testLen][percentile] = np.percentile(testPts, percentile)
+                
+                qTest = np.arange(0, 100+0.5, 0.5).tolist()
+                percentiles = np.percentile(testPts, qTest)
+                for q, p in zip(qTest, percentiles):
+                    t[testLen][q] = p
                     
         covDistOut = open(covDistFile, 'w')
         covDistOut.write(str(t))  

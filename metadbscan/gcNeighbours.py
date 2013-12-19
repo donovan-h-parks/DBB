@@ -29,13 +29,20 @@ class GcNeighbours(object):
     def __init__(self):
         self.logger = logging.getLogger()
 
-    def __workerThread(self, seqs, gcDist, queueIn, queueOut):
+    def __workerThread(self, seqs, gcDist, gcDistPer, queueIn, queueOut):
         """Process each data item in parallel."""
+        
+        sampleMeanGC = gcDist.keys()[0]
+        sampleSeqLen = gcDist[sampleMeanGC].keys()[0]
+        d = gcDist[sampleMeanGC][sampleSeqLen]
+        lowerBoundKey = findNearest(d.keys(), (100 - gcDistPer)/2.0)
+        upperBoundKey = findNearest(d.keys(), (100 + gcDistPer)/2.0)
+            
         while True:
             index, seqI = queueIn.get(block=True, timeout=None)
             if index == None:
                 break
-    
+
             row = np.zeros(len(seqs))
             for j, seqJ in enumerate(seqs):
                 if seqI.seqLen > seqJ.seqLen:
@@ -49,7 +56,11 @@ class GcNeighbours(object):
 
                 closestMeanGC = findNearest(gcDist.keys(), meanGC)
                 closestSeqLen = findNearest(gcDist[closestMeanGC].keys(), seqLen)
-                lowerBound, upperBound = gcDist[closestMeanGC][closestSeqLen]
+
+                d = gcDist[closestMeanGC][closestSeqLen]
+                lowerBound = d[lowerBoundKey]
+                upperBound = d[upperBoundKey]
+                
                 if inRange(gcDiff, lowerBound, upperBound):
                     row[j] = 1
 
@@ -75,7 +86,7 @@ class GcNeighbours(object):
         if self.logger.getEffectiveLevel() <= logging.INFO:
             sys.stdout.write('\n')
     
-    def run(self, seqs, gcDist, threads):  
+    def run(self, seqs, gcDist, gcDistPer, threads):  
         workerQueue = mp.Queue()
         writerQueue = mp.Queue()
         
@@ -88,7 +99,7 @@ class GcNeighbours(object):
         
         gcNeighbours = mp.Manager().list([None]*len(seqs))
 
-        workerProc = [mp.Process(target = self.__workerThread, args = (seqs, gcDist, workerQueue, writerQueue)) for _ in range(threads)]
+        workerProc = [mp.Process(target = self.__workerThread, args = (seqs, gcDist, gcDistPer, workerQueue, writerQueue)) for _ in range(threads)]
         writeProc = mp.Process(target = self.__writerThread, args = (gcNeighbours, len(seqs), writerQueue))
         
         writeProc.start()

@@ -29,8 +29,11 @@ class TdNeighbours(object):
     def __init__(self):
         self.logger = logging.getLogger()
     
-    def __workerThread(self, seqs, tetra, tdDist, queueIn, queueOut):
+    def __workerThread(self, seqs, tetra, tdDist, tdDistPer, queueIn, queueOut):
         """Process each data item in parallel."""
+        
+        distKey = findNearest(tdDist[tdDist.keys()[0]].keys(), tdDistPer)
+  
         while True:
             index, seqI = queueIn.get(block=True, timeout=None)
             if index == None:
@@ -44,7 +47,7 @@ class TdNeighbours(object):
                 dist = np.sum(np.abs(curTetraSig - tetraSig))
                 
                 minLen = min(seqI.seqLen, seqJ.seqLen)
-                if dist < tdDist[findNearest(tdDist.keys(), minLen)]:
+                if dist < tdDist[findNearest(tdDist.keys(), minLen)][distKey]:
                     row[j] = 1
   
             # allow results to be processed or written to file
@@ -69,7 +72,7 @@ class TdNeighbours(object):
         if self.logger.getEffectiveLevel() <= logging.INFO:
             sys.stdout.write('\n')
     
-    def run(self, seqIdsOfInterest, seqs, tetraFile, tdDist, threads):  
+    def run(self, seqIdsOfInterest, seqs, tetraFile, tdDist, tdDistPer, threads):  
         # read in tetranucleotide signatures for each sequence
         self.logger.info('    Reading tetranucleotide signatures.')
         tetra = {}
@@ -93,7 +96,7 @@ class TdNeighbours(object):
             
         tdNeighbours = mp.Manager().list([None]*len(seqs))
         
-        workerProc = [mp.Process(target = self.__workerThread, args = (seqs, tetra, tdDist, workerQueue, writerQueue)) for _ in range(threads)]
+        workerProc = [mp.Process(target = self.__workerThread, args = (seqs, tetra, tdDist, tdDistPer, workerQueue, writerQueue)) for _ in range(threads)]
         writeProc = mp.Process(target = self.__writerThread, args = (tdNeighbours, len(seqs), writerQueue))
         
         writeProc.start()

@@ -33,16 +33,6 @@ import ast
 
 import numpy as np
 
-def readDistribution(distPrefix, distPer):
-    """Read distribution file."""
-    distFile = os.path.join(os.path.join('/srv/whitlam/home/users/uqdparks/git/MetaDBSCAN/data', distPrefix, 'distribution_' + str(distPer) + '.txt'))
-
-    with open(distFile) as f:
-        s = f.read()
-        d = ast.literal_eval(s)
-        
-    return d
-
 def findNearest(array, value):
     '''Find nearest array element to a given value.'''
     idx = (np.abs(np.array(array)-value)).argmin()

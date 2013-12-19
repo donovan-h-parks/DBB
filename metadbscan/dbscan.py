@@ -17,28 +17,18 @@
 #                                                                             #
 ###############################################################################
 
-__prog_desc__ = 'genome aware DBSCAN'
-
-__author__ = 'Donovan Parks'
-__copyright__ = 'Copyright 2013'
-__credits__ = ['Donovan Parks']
-__license__ = 'GPL3'
-__version__ = '0.1'
-__maintainer__ = 'Donovan Parks'
-__email__ = 'donovan.parks@gmail.com'
-__status__ = 'Development'
-
 import os
+import sys
 import ast
 import logging
 import re
+import json
 from collections import defaultdict, Counter
 
 import numpy as np
 
 from common import checkFileExists
 from seqUtils import readSeqStats
-from distributions import readDistribution
 
 from resolveConflicts import ResolveConflicts
 
@@ -259,6 +249,12 @@ class DBSCAN(object):
         
         tetraFile = os.path.join(preprocessDir, 'partitions.tetra.tsv')
         checkFileExists(tetraFile)
+
+        gcDistFile = os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), '..', 'data', 'gc_dist.txt')
+        checkFileExists(gcDistFile)
+        
+        tdDistFile = os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), '..', 'data', 'td_dist.txt')
+        checkFileExists(tdDistFile)
         
         coverageDistFile = os.path.join(preprocessDir, 'coverage_dist.txt')
         checkFileExists(coverageDistFile)
@@ -302,9 +298,15 @@ class DBSCAN(object):
         # read GC, TD and coverage distributions
         self.logger.info('')
         self.logger.info('  Reading GC, TD and coverage distributions.')
-        gcDist = readDistribution('gc_dist', gcDistPer)
-        tdDist = readDistribution('td_dist', tdDistPer)
 
+        with open(gcDistFile, 'r') as f:
+            s = f.read()
+            gcDist = ast.literal_eval(s)
+            
+        with open(tdDistFile, 'r') as f:
+            s = f.read()
+            tdDist = ast.literal_eval(s)
+        
         with open(coverageDistFile) as f:
             s = f.read()
             covDist = ast.literal_eval(s)
@@ -317,11 +319,11 @@ class DBSCAN(object):
         
         self.logger.info('  Calculating GC neighbours:')
         gcNeighbours = GcNeighbours()
-        gcNeighbours.run(self.sortedSeqs, gcDist, numThreads)
+        gcNeighbours.run(self.sortedSeqs, gcDist, gcDistPer, numThreads)
         
         self.logger.info('  Calculating TD neighbours:')
         tdNeighbours = TdNeighbours()
-        tdNeighbours.run(self.seqIdsOfInterest, self.sortedSeqs, tetraFile, tdDist, numThreads)
+        tdNeighbours.run(self.seqIdsOfInterest, self.sortedSeqs, tetraFile, tdDist, tdDistPer, numThreads)
 
         # perform clustering via genome-aware DBSCAN
         self.logger.info('')

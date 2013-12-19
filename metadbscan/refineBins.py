@@ -27,7 +27,7 @@ from collections import defaultdict
 
 from common import checkFileExists
 from seqUtils import readSeqStats
-from distributions import readDistribution, findNearest, inRange
+from distributions import findNearest, inRange
 
 from resolveConflicts import ResolveConflicts
 from dbscan import DBSCAN, Sequence
@@ -37,21 +37,26 @@ class RefineBins(object):
     def __init__(self, bDebug=False):
         self.logger = logging.getLogger()
         
-    def __withinDistGC(self, gcDist, unbinnedContig, core):
+    def __withinDistGC(self, gcDist,gcLowerBoundKey, gcUpperBoundKey, unbinnedContig, core):
         closestMeanGC = findNearest(gcDist.keys(), core.GC)
         closestSeqLen = findNearest(gcDist[closestMeanGC].keys(), unbinnedContig.seqLen)
-        lowerBound, upperBound = gcDist[closestMeanGC][closestSeqLen]
+
+        d = gcDist[closestMeanGC][closestSeqLen]
+        lowerBound = d[gcLowerBoundKey]
+        upperBound = d[gcUpperBoundKey]
         
         gcDiff = unbinnedContig.GC - core.GC
         return inRange(gcDiff, lowerBound, upperBound)
         
-    def __witinDistTD(self, tdDist, tetraDist, unbinnedContig):
-        return tetraDist < tdDist[findNearest(tdDist.keys(), unbinnedContig.seqLen)]
+    def __witinDistTD(self, tdDist, tdKey, tetraDist, unbinnedContig):
+        return tetraDist < tdDist[findNearest(tdDist.keys(), unbinnedContig.seqLen)][tdKey]
         
-    def __withinDistCov(self, covDist, covDistPer, unbinnedContig, core):
+    def __withinDistCov(self, covDist, covLowerBoundKey, covUpperBoundKey, unbinnedContig, core):
         closestSeqLen = findNearest(covDist.keys(), unbinnedContig.seqLen)
-        lowerBound = covDist[closestSeqLen][int((100 - covDistPer)/2)]
-        upperBound = covDist[closestSeqLen][int((100 + covDistPer)/2)]
+
+        d = covDist[closestSeqLen]
+        lowerBound = d[covLowerBoundKey]
+        upperBound = d[covUpperBoundKey]
         
         covPerDiff = (unbinnedContig.coverage - core.coverage)*100.0 / core.coverage
         return inRange(covPerDiff, lowerBound, upperBound)
@@ -62,12 +67,26 @@ class RefineBins(object):
     def __covDistance(self, unbinnedContig, core):
         return abs(unbinnedContig.coverage - core.coverage)
         
-    def __refineBins(self, unbinnedContigs, cores, gcDist, tdDist, covDist, covDistPer, genomicSig):
+    def __refineBins(self, unbinnedContigs, cores, gcDist, gcDistPer, tdDist, tdDistPer, covDist, covDistPer, genomicSig):
         # assign unbinned contig to a core bin if and only if:
         #   1) the core is valid: within the defined GC, TD and coverage distribution cutoffs
         #   2) the core is the closest in GC, TD, and coverage space of all valid cores
-        #   
-   
+        
+        # determine distribution index values for each distribution
+        # (this is a little messy due to floating point keys)
+        sampleMeanGC = gcDist.keys()[0]
+        sampleSeqLen = gcDist[sampleMeanGC].keys()[0]
+        d = gcDist[sampleMeanGC][sampleSeqLen]
+        gcLowerBoundKey = findNearest(d.keys(), (100 - gcDistPer)/2.0)
+        gcUpperBoundKey = findNearest(d.keys(), (100 + gcDistPer)/2.0)
+        
+        tdKey = findNearest(tdDist[tdDist.keys()[0]].keys(), tdDistPer)
+        
+        d = covDist[covDist.keys()[0]]
+        covLowerBoundKey = findNearest(d.keys(), (100 - gcDistPer)/2.0)
+        covUpperBoundKey = findNearest(d.keys(), (100 + gcDistPer)/2.0)
+        
+        # check if each unbinned contig can be assigned to a core bin
         numAssigned = 0
         numInvalidWithAllCores = 0
         numFailingDistanceTest = 0
@@ -85,14 +104,14 @@ class RefineBins(object):
                 sys.stdout.flush()
 
             for clusterId, core in cores.iteritems():
-                if not self.__withinDistGC(gcDist, unbinnedContig, core):
+                if not self.__withinDistGC(gcDist, gcLowerBoundKey, gcUpperBoundKey, unbinnedContig, core):
                     continue
                     
-                if not self.__withinDistCov(covDist, covDistPer, unbinnedContig, core):
+                if not self.__withinDistCov(covDist, covLowerBoundKey, covUpperBoundKey, unbinnedContig, core):
                     continue
                     
                 tdDistance = genomicSig.distance(unbinnedContig.tetraSig, core.tetraSig)
-                if not self.__witinDistTD(tdDist, tdDistance, unbinnedContig):
+                if not self.__witinDistTD(tdDist, tdKey, tdDistance, unbinnedContig):
                     continue
                     
                 gcDistance = self.__gcDistance(unbinnedContig, core)
@@ -209,6 +228,12 @@ class RefineBins(object):
         contigTetraFile = os.path.join(preprocessDir, 'contigs.tetra.tsv')
         checkFileExists(contigTetraFile)
         
+        gcDistFile = os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), '..', 'data', 'gc_dist.txt')
+        checkFileExists(gcDistFile)
+        
+        tdDistFile = os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), '..', 'data', 'td_dist.txt')
+        checkFileExists(tdDistFile)
+        
         coverageDistFile = os.path.join(preprocessDir, 'coverage_dist.txt')
         checkFileExists(coverageDistFile)
         
@@ -276,8 +301,14 @@ class RefineBins(object):
         # read GC, TD and coverage distributions
         self.logger.info('')
         self.logger.info('  Reading GC, TD, and coverage distributions.')
-        gcDist = readDistribution('gc_dist', gcDistPer)
-        tdDist = readDistribution('td_dist', tdDistPer)
+
+        with open(gcDistFile, 'r') as f:
+            s = f.read()
+            gcDist = ast.literal_eval(s)
+            
+        with open(tdDistFile, 'r') as f:
+            s = f.read()
+            tdDist = ast.literal_eval(s)
         
         with open(coverageDistFile) as f:
             s = f.read()
@@ -286,7 +317,7 @@ class RefineBins(object):
         # refine bins
         self.logger.info('')
         self.logger.info('  Refining bins:')
-        self.__refineBins(unbinnedContigs, cores, gcDist, tdDist, covDist, covDistPer, genomicSig)
+        self.__refineBins(unbinnedContigs, cores, gcDist, gcDistPer, tdDist, tdDistPer, covDist, covDistPer, genomicSig)
                 
         # resolve conflicts between contigs originating on the same scaffold
         # and use the conflicts as a measure of the binning quality
