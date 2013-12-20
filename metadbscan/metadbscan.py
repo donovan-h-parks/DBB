@@ -21,7 +21,7 @@ __author__ = 'Donovan Parks'
 __copyright__ = 'Copyright 2013'
 __credits__ = ['Donovan Parks']
 __license__ = 'GPL3'
-__version__ = '0.1'
+__version__ = '0.0.2'
 __maintainer__ = 'Donovan Parks'
 __email__ = 'donovan.parks@gmail.com'
 __status__ = 'Development'
@@ -88,7 +88,7 @@ class MetaDBSCAN(object):
         argsStr = ', '.join(map(str.strip, str(args).replace('Namespace(', '').replace(')', '').split(',')))
         
         dbscan = DBSCAN()
-        dbscan.run(args.preprocess_dir, args.min_seq_len, args.min_bin_size, args.gc_dist_per, args.td_dist_per, args.cov_dist_per, args.min_pts, args.min_core_len, args.threads, args.binning_file, argsStr)
+        dbscan.run(args.preprocess_dir, args.min_seq_len, args.min_bin_size, args.gc_dist_per, args.td_dist_per, args.cov_dist_per, args.min_core_bps, args.min_core_len, args.threads, args.binning_file, argsStr)
             
         self.timeKeeper.printTimeStamp() 
         
@@ -101,7 +101,7 @@ class MetaDBSCAN(object):
         argsStr = ', '.join(map(str.strip, str(args).replace('Namespace(', '').replace(')', '').split(',')))
         
         refineBins = RefineBins()
-        refineBins.run(args.preprocess_dir, args.binning_file, args.min_seq_len, args.gc_dist_per, args.td_dist_per, args.cov_dist_per, args.refined_bin_file, argsStr)
+        refineBins.run(args.preprocess_dir, args.binning_file, args.min_seq_len, args.gc_dist_per, args.td_dist_per, args.cov_dist_per, args.threads, args.refined_bin_file, argsStr)
             
         self.timeKeeper.printTimeStamp() 
         
@@ -178,7 +178,7 @@ class MetaDBSCAN(object):
         
         self.logger.info('  Creating GC vs coverage plot.')
         plot = GcCoveragePlot(args)      
-        plot.plot(args.binning_file, args.min_seq_len, args.min_core_len, args.coverage_log, not args.no_bounding_box, not args.no_labels)
+        plot.plot(args.binning_file, args.min_seq_len, args.min_core_len, args.coverage_linear, not args.hide_bounding_boxes, not args.hide_labels)
         
         outputFile = os.path.join(args.plot_folder, 'gc_cov_plot.' + args.image_type)
         plot.savePlot(outputFile, dpi=args.dpi)
@@ -194,7 +194,7 @@ class MetaDBSCAN(object):
             seqStatsForClusters = readSeqStatsForClusters(args.binning_file)
             for clusterId in sorted(seqStatsForClusters.keys()):
                 if clusterId != DBSCAN.NOISE:
-                    plot.plot(args.binning_file, args.min_seq_len, args.min_core_len, args.coverage_log, not args.no_bounding_box, not args.no_labels, clusterId)
+                    plot.plot(args.binning_file, args.min_seq_len, args.min_core_len, args.coverage_linear, not args.hide_bounding_boxes, not args.hide_labels, clusterId)
                     
                     outputFile = os.path.join(args.plot_folder, 'gc_cov_plot.bin' + str(clusterId) + '.' + args.image_type)
                     plot.savePlot(outputFile, dpi=args.dpi)

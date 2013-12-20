@@ -23,11 +23,13 @@ from metadbscan.dbscan import DBSCAN, readSeqStatsForClusters
 
 from matplotlib.colors import rgb2hex
 
+import numpy as np
+
 class GcCoveragePlot(AbstractPlot):
     def __init__(self, options):
         AbstractPlot.__init__(self, options)
 
-    def plot(self, binningFile, minSeqLen, minCoreLen, bCoverageLog, bBoundingBoxes, bLabels, highlightedClusterId = None, clusterIdToColour = None):
+    def plot(self, binningFile, minSeqLen, minCoreLen, bCoverageLinear, bBoundingBoxes, bLabels, highlightedClusterId = None, clusterIdToColour = None):
         # read GC and coverage for sequences
         seqStatsForClusters = readSeqStatsForClusters(binningFile)
         
@@ -37,12 +39,15 @@ class GcCoveragePlot(AbstractPlot):
         
         axes = self.fig.add_subplot(111)
         
-        self.plotOnAxes(axes, seqStatsForClusters, minSeqLen, minCoreLen, bCoverageLog, bBoundingBoxes, bLabels, highlightedClusterId, clusterIdToColour)
+        self.plotOnAxes(axes, seqStatsForClusters, minSeqLen, minCoreLen, bCoverageLinear, bBoundingBoxes, bLabels, highlightedClusterId, clusterIdToColour)
         
         self.fig.tight_layout(pad=5)
         
-    def plotOnAxes(self, axes, seqStatsForClusters, minSeqLen, minCoreLen, bCoverageLog, bBoundingBoxes, bLabels, highlightedClusterId, clusterIdToColour):
+    def plotOnAxes(self, axes, seqStatsForClusters, minSeqLen, minCoreLen, bCoverageLinear, bBoundingBoxes, bLabels, highlightedClusterId, clusterIdToColour):
         # plot each bin
+        highlightedBinSize = 0
+        highlightedBinGC = []
+        highlightedBinCoverage = []
         for clusterId in sorted(seqStatsForClusters.keys()):
             gcDR = []
             covDR = []
@@ -57,6 +62,11 @@ class GcCoveragePlot(AbstractPlot):
                 else:
                     gcDR.append(GC)
                     covDR.append(coverage)
+                    
+                if highlightedClusterId == clusterId:
+                    highlightedBinSize += seqLen    
+                    highlightedBinGC.append(GC)
+                    highlightedBinCoverage.append(coverage)
                 
             if highlightedClusterId == None:
                 if clusterId != DBSCAN.NOISE:
@@ -74,7 +84,7 @@ class GcCoveragePlot(AbstractPlot):
                 if clusterId == highlightedClusterId:
                     color = (1.0, 0.0, 0.0)
                     alpha = 1
-                    zorder = 3
+                    zorder = 3  
                 else:
                     color = (0.7, 0.7, 0.7)
                     alpha = 1
@@ -98,9 +108,17 @@ class GcCoveragePlot(AbstractPlot):
         axes.set_xlabel('GC')
         axes.set_ylabel('Coverage')
         
-        if bCoverageLog:
+        if not bCoverageLinear:
             axes.set_yscale('log')
             axes.set_ylabel('log(coverage)')
+            
+        if highlightedClusterId != None:
+            axes.set_title('Bin %d, # sequences = %d, size = %.2fMbps\nGC = %.1f +/- %.2f, Coverage = %.1f +/- %.2f' % 
+                            (highlightedClusterId, 
+                             len(seqStatsForClusters[highlightedClusterId]),
+                             float(highlightedBinSize)/1e6,
+                             np.mean(highlightedBinGC)*100.0, np.std(highlightedBinGC)*100.0,
+                             np.mean(highlightedBinCoverage), np.std(highlightedBinCoverage)))
         
         # Prettify plot
         _, yMax = axes.get_ylim()

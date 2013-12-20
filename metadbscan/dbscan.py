@@ -22,8 +22,7 @@ import sys
 import ast
 import logging
 import re
-import json
-from collections import defaultdict, Counter
+from collections import defaultdict
 
 import numpy as np
 
@@ -72,35 +71,37 @@ class DBSCAN(object):
         self.numClusters = 0  
         self.sortedSeqs = None
     
-    def __neighbourIndices(self, seq):
+    def __neighbours(self, seq):
+        # find indices of neighbours
         covNeighbours = np.where(seq.covNeighbours == 1)[0]
         gcNeighbours = np.where(seq.gcNeighbours == 1)[0]
         tdNeighbours = np.where(seq.tdNeighbours == 1)[0]
         
         intersectCovGC = np.intersect1d(covNeighbours, gcNeighbours, assume_unique=True)
-        return np.intersect1d(tdNeighbours, intersectCovGC, assume_unique=True)
+        neighbourIndices = np.intersect1d(tdNeighbours, intersectCovGC, assume_unique=True)
         
-    def __neighbours(self, neighbourIndices):
+        # get neighbours
         neighbourSeqs = set()
         for i in neighbourIndices:
             neighbourSeqs.add(self.sortedSeqs[i])
+            
         return neighbourSeqs
     
-    def __dbscan(self, seqs, minPts, minCoreLen):
+    def __dbscan(self, seqs, minCoreBPs, minCoreLen):
         for seq in seqs:
             if seq.bVisited:
                 continue
 
             seq.bVisited = True
-            neighbourIndices = self.__neighbourIndices(seq)
+            neighbours = self.__neighbours(seq)
+            totalNeighbourBPs = sum(n.seqLen for n in neighbours)
 
-            if len(neighbourIndices) >= minPts and seq.seqLen >= minCoreLen:
+            if totalNeighbourBPs >= minCoreBPs and seq.seqLen >= minCoreLen:
                 # this point is core so expand it's neighbourhood
-                neighbours = self.__neighbours(neighbourIndices)
-                self.__expandCluster(seq, neighbours, self.numClusters, minPts, minCoreLen)
+                self.__expandCluster(seq, neighbours, self.numClusters, minCoreBPs, minCoreLen)
                 self.numClusters += 1
          
-    def __expandCluster(self, seq, neighbours, clusterNum, minPts, minCoreLen):
+    def __expandCluster(self, seq, neighbours, clusterNum, minCoreBPs, minCoreLen):
         seq.clusterNum = clusterNum   
             
         while neighbours:
@@ -108,10 +109,11 @@ class DBSCAN(object):
             
             if not curSeq.bVisited:
                 curSeq.bVisited = True
-                neighbourIndices = self.__neighbourIndices(curSeq)
-                if len(neighbourIndices) >= minPts and curSeq.seqLen >= minCoreLen:
+                curNeighbours = self.__neighbours(curSeq)
+                totalNeighbourBPs = sum(n.seqLen for n in curNeighbours)
+                if totalNeighbourBPs >= minCoreBPs and curSeq.seqLen >= minCoreLen:
                     # this is a core point so add it's neighbours to the neighbourhood list
-                    neighbours.update(self.__neighbours(neighbourIndices))
+                    neighbours.update(curNeighbours)
                 
             if curSeq.clusterNum == DBSCAN.NOISE:
                 curSeq.clusterNum = clusterNum
@@ -242,7 +244,7 @@ class DBSCAN(object):
         self.logger.info('')
         self.logger.info('    Binning information written to: ' + binningFile)
                
-    def run(self, preprocessDir, minSeqLen, minBinSize, gcDistPer, tdDistPer, covDistPer, minPts, minCoreLen, numThreads, binningFile, argsStr):
+    def run(self, preprocessDir, minSeqLen, minBinSize, gcDistPer, tdDistPer, covDistPer, minCoreBPs, minCoreLen, numThreads, binningFile, argsStr):
         # verify inputs
         seqStatsFile = os.path.join(preprocessDir, 'partitions.seq_stats.tsv')
         checkFileExists(seqStatsFile)
@@ -328,7 +330,7 @@ class DBSCAN(object):
         # perform clustering via genome-aware DBSCAN
         self.logger.info('')
         self.logger.info('  Running DBSCAN.')
-        self.__dbscan(self.sortedSeqs, minPts, minCoreLen)
+        self.__dbscan(self.sortedSeqs, minCoreBPs, minCoreLen)
         self.logger.info('    Found %d clusters.' % self.numClusters)
         
         # resolve conflicts between partitions originating on the same contig

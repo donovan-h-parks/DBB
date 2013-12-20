@@ -23,6 +23,7 @@ import ast
 import logging
 import re
 import itertools
+import multiprocessing as mp
 from collections import defaultdict
 
 from common import checkFileExists
@@ -66,8 +67,11 @@ class RefineBins(object):
         
     def __covDistance(self, unbinnedContig, core):
         return abs(unbinnedContig.coverage - core.coverage)
+    
+    
+    def __workerThread(self, unbinnedContigs, cores, gcDist, gcDistPer, tdDist, tdDistPer, covDist, covDistPer, genomicSig, workerQueue, writerQueue):
+        """Process each unbinned contig in parallel."""
         
-    def __refineBins(self, unbinnedContigs, cores, gcDist, gcDistPer, tdDist, tdDistPer, covDist, covDistPer, genomicSig):
         # assign unbinned contig to a core bin if and only if:
         #   1) the core is valid: within the defined GC, TD and coverage distribution cutoffs
         #   2) the core is the closest in GC, TD, and coverage space of all valid cores
@@ -83,26 +87,20 @@ class RefineBins(object):
         tdKey = findNearest(tdDist[tdDist.keys()[0]].keys(), tdDistPer)
         
         d = covDist[covDist.keys()[0]]
-        covLowerBoundKey = findNearest(d.keys(), (100 - gcDistPer)/2.0)
-        covUpperBoundKey = findNearest(d.keys(), (100 + gcDistPer)/2.0)
-        
-        # check if each unbinned contig can be assigned to a core bin
-        numAssigned = 0
-        numInvalidWithAllCores = 0
-        numFailingDistanceTest = 0
-        assignedBP = 0
-        unassignedBP = 0
-        for processedSeqs, unbinnedContig in enumerate(unbinnedContigs):
+        covLowerBoundKey = findNearest(d.keys(), (100 - covDistPer)/2.0)
+        covUpperBoundKey = findNearest(d.keys(), (100 + covDistPer)/2.0)
+                 
+        while True:
+            index = workerQueue.get(block=True, timeout=None)
+            if index == None:
+                break
+            
+            unbinnedContig = unbinnedContigs[index]
+            
             # find closest core in GC, TD, and coverage space
             closestCluster = [None]*3
             minDistances = [1e9]*3
             
-            if self.logger.getEffectiveLevel() <= logging.INFO:
-                processedSeqs += 1
-                statusStr = '    Processed %d of %d (%.2f%%) unbinned contigs.' % (processedSeqs, len(unbinnedContigs), float(processedSeqs)*100/len(unbinnedContigs))
-                sys.stdout.write('%s\r' % statusStr)
-                sys.stdout.flush()
-
             for clusterId, core in cores.iteritems():
                 if not self.__withinDistGC(gcDist, gcLowerBoundKey, gcUpperBoundKey, unbinnedContig, core):
                     continue
@@ -124,29 +122,102 @@ class RefineBins(object):
                         closestCluster[i] = clusterId
                         
             # check if unbinned contig is closest to a single core is all three spaces
+            bAssigned = False
+            bFailedDistanceTest = False
+            bInvalidWithAllCores = False
             if closestCluster[0] != None:
                 if closestCluster[0] == closestCluster[1] and closestCluster[0] == closestCluster[2]:
-                    numAssigned += 1
-                    unbinnedContig.clusterNum = cores[closestCluster[0]].clusterNum
-                    assignedBP += unbinnedContig.seqLen
+                    bAssigned = True
+                    newClusterNum = cores[closestCluster[0]].clusterNum
                 else:
-                    numFailingDistanceTest += 1
-                    unassignedBP += unbinnedContig.seqLen
+                    bFailedDistanceTest = True
+                    newClusterNum = DBSCAN.NOISE
             else:
+                bInvalidWithAllCores = True
+                newClusterNum = DBSCAN.NOISE
+                
+            # allow results to be processed or written to file
+            writerQueue.put((index, newClusterNum, unbinnedContig.seqLen, bAssigned, bFailedDistanceTest, bInvalidWithAllCores))
+    
+    def __writerThread(self, newAssignments, numUnbinnedContigs, writerQueue):
+        """Store results of worker threads in a single thread."""
+        
+        numAssigned = 0
+        numInvalidWithAllCores = 0
+        numFailedDistanceTest = 0
+        assignedBP = 0
+        unassignedBP = 0
+        
+        processedSeqs = 0
+        while True:
+            index, newClusterNum, unbinnedLen, bAssigned, bFailedDistanceTest, bInvalidWithAllCores = writerQueue.get(block=True, timeout=None)
+            if index == None:
+                break
+            
+            newAssignments[index] = newClusterNum
+            
+            if self.logger.getEffectiveLevel() <= logging.INFO:
+                processedSeqs += 1
+                statusStr = '    Processed %d of %d (%.2f%%) unbinned contigs.' % (processedSeqs, numUnbinnedContigs, float(processedSeqs)*100/numUnbinnedContigs)
+                sys.stdout.write('%s\r' % statusStr)
+                sys.stdout.flush()
+                          
+            # check if unbinned contig is closest to a single core is all three spaces
+            if bAssigned:
+                    numAssigned += 1
+                    assignedBP += unbinnedLen
+            elif bFailedDistanceTest:
+                    numFailedDistanceTest += 1
+                    unassignedBP += unbinnedLen
+            elif bInvalidWithAllCores:
                 numInvalidWithAllCores += 1
-                unassignedBP += unbinnedContig.seqLen
+                unassignedBP += unbinnedLen
+            else:
+                self.logger.error('  [Error] Unknown assignment for unbinned contig.')
+                sys.exit()
                 
         if self.logger.getEffectiveLevel() <= logging.INFO:
-            statusStr = '    Processed %d of %d (%.2f%%) unbinned contigs.' % (processedSeqs, len(unbinnedContigs), float(processedSeqs)*100/len(unbinnedContigs))
-            sys.stdout.write('%s\n' % statusStr)
-            sys.stdout.flush()
+            sys.stdout.write('\n')
                 
-        numUnassigned = len(unbinnedContigs)-numAssigned
-        self.logger.info('    Assigned %d of %d (%.2f%%) unbinned contigs to a core bin.' % (numAssigned, len(unbinnedContigs), numAssigned*100.0/len(unbinnedContigs)))
+        numUnassigned = numUnbinnedContigs - numAssigned
+        self.logger.info('    Assigned %d of %d (%.2f%%) unbinned contigs to a core bin.' % (numAssigned, numUnbinnedContigs, numAssigned*100.0/numUnbinnedContigs))
         self.logger.info('      - %d of %d (%.2f%%) unassigned contigs were invalid with all cores' % (numInvalidWithAllCores, numUnassigned, numInvalidWithAllCores*100.0/numUnassigned))
-        self.logger.info('      - %d of %d (%.2f%%) unassigned contigs failed distance test' % (numFailingDistanceTest, numUnassigned, numFailingDistanceTest*100.0/numUnassigned))
+        self.logger.info('      - %d of %d (%.2f%%) unassigned contigs failed distance test' % (numFailedDistanceTest, numUnassigned, numFailedDistanceTest*100.0/numUnassigned))
         self.logger.info('    Assigned %.2f of %.2f Mbps (%.2f%%) of the unbinned bases.' % (float(assignedBP)/1e6, float(assignedBP+unassignedBP)/1e6, float(assignedBP)*100/(assignedBP+unassignedBP)))
+
+    def __refineBins(self, unbinnedContigs, cores, gcDist, gcDistPer, tdDist, tdDistPer, covDist, covDistPer, genomicSig, numThreads): 
+        """Process each unbinned contig in parallel."""
         
+        # process each unbinned sequence independently
+        workerQueue = mp.Queue()
+        writerQueue = mp.Queue()
+        
+        # populate worker queue with data to process
+        for i in xrange(0, len(unbinnedContigs)):
+            workerQueue.put(i)
+        
+        for _ in range(numThreads):
+            workerQueue.put(None)
+            
+        newAssignments = mp.Manager().list([None]*len(unbinnedContigs))
+        
+        workerProc = [mp.Process(target = self.__workerThread, args = (unbinnedContigs, cores, gcDist, gcDistPer, tdDist, tdDistPer, covDist, covDistPer, genomicSig, workerQueue, writerQueue)) for _ in range(numThreads)]
+        writeProc = mp.Process(target = self.__writerThread, args = (newAssignments, len(unbinnedContigs), writerQueue))
+        
+        writeProc.start()
+        
+        for p in workerProc:
+            p.start()
+        
+        for p in workerProc:
+            p.join()
+        
+        writerQueue.put((None, None, None, None, None, None))
+        writeProc.join()
+        
+        for i, clusterNum in enumerate(newAssignments):
+            unbinnedContigs[i].clusterNum = clusterNum
+ 
     def __resolveConflictingContigs(self, unbinnedContigs, binnedContigs):
         # map contigs (or the partitions comprising a contig) 
         # to their originating scaffolds
@@ -220,7 +291,7 @@ class RefineBins(object):
         self.logger.info('')
         self.logger.info('    Binning information written to: ' + refinedBinFile)
                
-    def run(self, preprocessDir, binningFile, minSeqLen, gcDistPer, tdDistPer, covDistPer, refinedBinFile, argStr):
+    def run(self, preprocessDir, binningFile, minSeqLen, gcDistPer, tdDistPer, covDistPer, numThreads, refinedBinFile, argStr):
         # verify inputs
         contigStatsFile = os.path.join(preprocessDir, 'contigs.seq_stats.tsv')
         checkFileExists(contigStatsFile)
@@ -262,8 +333,8 @@ class RefineBins(object):
         self.logger.info('  Calculating statistics of core bins.')
 
         cores = {}
-        unbinnedContigs = set()
-        binnedContigs = set()
+        unbinnedContigs = []
+        binnedContigs = []
         for contigId, contigStat in contigStats.iteritems():  
             clusterId = contigIdToClusterId.get(contigId, DBSCAN.NOISE)
             
@@ -276,9 +347,9 @@ class RefineBins(object):
             
             if clusterId == DBSCAN.NOISE: 
                 if contigLen > minSeqLen:
-                    unbinnedContigs.add(seq)
+                    unbinnedContigs.append(seq)
             else:
-                binnedContigs.add(seq)
+                binnedContigs.append(seq)
  
                 # build statistics for core bins
                 if clusterId not in cores:
@@ -294,9 +365,9 @@ class RefineBins(object):
                 core.coverage = contigCov*weight + core.coverage*(1.0-weight)
                 for i in xrange(0, len(core.tetraSig)):
                     core.tetraSig[i] = contigTetraSig[i]*weight + core.tetraSig[i]*(1.0-weight)
-        
-        self.logger.info('    Identified %d unbinned contigs >= %d bps.' % (len(unbinnedContigs), minSeqLen))
+       
         self.logger.info('    Identified %d binned contigs from %d core bins.' % (len(binnedContigs), len(cores)))
+        self.logger.info('    Identified %d unbinned contigs >= %d bps.' % (len(unbinnedContigs), minSeqLen))
 
         # read GC, TD and coverage distributions
         self.logger.info('')
@@ -317,7 +388,7 @@ class RefineBins(object):
         # refine bins
         self.logger.info('')
         self.logger.info('  Refining bins:')
-        self.__refineBins(unbinnedContigs, cores, gcDist, gcDistPer, tdDist, tdDistPer, covDist, covDistPer, genomicSig)
+        self.__refineBins(unbinnedContigs, cores, gcDist, gcDistPer, tdDist, tdDistPer, covDist, covDistPer, genomicSig, numThreads)
                 
         # resolve conflicts between contigs originating on the same scaffold
         # and use the conflicts as a measure of the binning quality

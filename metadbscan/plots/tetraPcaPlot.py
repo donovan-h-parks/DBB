@@ -149,6 +149,6 @@ class TetraPcaPlot(AbstractPlot):
                     
         # plot GC vs. coverage
         gcCoveragePlot = GcCoveragePlot(self.options)
-        gcCoveragePlot.plotOnAxes(axesGcCov, seqStatsForClusters, minSeqLen, minCoreLen, True, bBoundingBoxes, bLabels, highlightedClusterId, clusterIdToColour)
+        gcCoveragePlot.plotOnAxes(axesGcCov, seqStatsForClusters, minSeqLen, minCoreLen, False, bBoundingBoxes, bLabels, highlightedClusterId, clusterIdToColour)
                 
         self.fig.tight_layout(pad=5, w_pad=15, h_pad=15)

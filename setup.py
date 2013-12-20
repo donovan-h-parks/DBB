@@ -2,7 +2,7 @@ from distutils.core import setup
 
 setup(
     name='MetaDBSCAN',
-    version='0.0.1',
+    version='0.0.2',
     author='Donovan Parks',
     author_email='donovan.parks@gmail.com',
     packages=['metadbscan', 'metadbscan.plots'],
