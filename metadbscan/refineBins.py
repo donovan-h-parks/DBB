@@ -19,7 +19,6 @@
 
 import os
 import sys
-import ast
 import logging
 import re
 import itertools
@@ -27,69 +26,25 @@ import multiprocessing as mp
 from collections import defaultdict
 
 from common import checkFileExists
+from defaultValues import DefaultValues
 from seqUtils import readSeqStats
-from distributions import findNearest, inRange
+from distributions import Distributions, readDistributions
 
 from resolveConflicts import ResolveConflicts
-from dbscan import DBSCAN, Sequence
+from greedy import Greedy, Contig, Core, reportBins, readContigIdtoBinId
 from genomicSignatures import GenomicSignatures
 
 class RefineBins(object):
     def __init__(self, bDebug=False):
         self.logger = logging.getLogger()
-        
-    def __withinDistGC(self, gcDist,gcLowerBoundKey, gcUpperBoundKey, unbinnedContig, core):
-        closestMeanGC = findNearest(gcDist.keys(), core.GC)
-        closestSeqLen = findNearest(gcDist[closestMeanGC].keys(), unbinnedContig.seqLen)
 
-        d = gcDist[closestMeanGC][closestSeqLen]
-        lowerBound = d[gcLowerBoundKey]
-        upperBound = d[gcUpperBoundKey]
-        
-        gcDiff = unbinnedContig.GC - core.GC
-        return inRange(gcDiff, lowerBound, upperBound)
-        
-    def __witinDistTD(self, tdDist, tdKey, tetraDist, unbinnedContig):
-        return tetraDist < tdDist[findNearest(tdDist.keys(), unbinnedContig.seqLen)][tdKey]
-        
-    def __withinDistCov(self, covDist, covLowerBoundKey, covUpperBoundKey, unbinnedContig, core):
-        closestSeqLen = findNearest(covDist.keys(), unbinnedContig.seqLen)
-
-        d = covDist[closestSeqLen]
-        lowerBound = d[covLowerBoundKey]
-        upperBound = d[covUpperBoundKey]
-        
-        covPerDiff = (unbinnedContig.coverage - core.coverage)*100.0 / core.coverage
-        return inRange(covPerDiff, lowerBound, upperBound)
-                    
-    def __gcDistance(self, unbinnedContig, core):
-        return abs(unbinnedContig.GC - core.GC)
-        
-    def __covDistance(self, unbinnedContig, core):
-        return abs(unbinnedContig.coverage - core.coverage)
-    
-    
-    def __workerThread(self, unbinnedContigs, cores, gcDist, gcDistPer, tdDist, tdDistPer, covDist, covDistPer, genomicSig, workerQueue, writerQueue):
+    def __workerThread(self, unbinnedContigs, cores, distributions, genomicSig, workerQueue, writerQueue):
         """Process each unbinned contig in parallel."""
         
         # assign unbinned contig to a core bin if and only if:
         #   1) the core is valid: within the defined GC, TD and coverage distribution cutoffs
         #   2) the core is the closest in GC, TD, and coverage space of all valid cores
-        
-        # determine distribution index values for each distribution
-        # (this is a little messy due to floating point keys)
-        sampleMeanGC = gcDist.keys()[0]
-        sampleSeqLen = gcDist[sampleMeanGC].keys()[0]
-        d = gcDist[sampleMeanGC][sampleSeqLen]
-        gcLowerBoundKey = findNearest(d.keys(), (100 - gcDistPer)/2.0)
-        gcUpperBoundKey = findNearest(d.keys(), (100 + gcDistPer)/2.0)
-        
-        tdKey = findNearest(tdDist[tdDist.keys()[0]].keys(), tdDistPer)
-        
-        d = covDist[covDist.keys()[0]]
-        covLowerBoundKey = findNearest(d.keys(), (100 - covDistPer)/2.0)
-        covUpperBoundKey = findNearest(d.keys(), (100 + covDistPer)/2.0)
-                 
+                  
         while True:
             index = workerQueue.get(block=True, timeout=None)
             if index == None:
@@ -98,46 +53,46 @@ class RefineBins(object):
             unbinnedContig = unbinnedContigs[index]
             
             # find closest core in GC, TD, and coverage space
-            closestCluster = [None]*3
+            closestBin = [None]*3
             minDistances = [1e9]*3
             
-            for clusterId, core in cores.iteritems():
-                if not self.__withinDistGC(gcDist, gcLowerBoundKey, gcUpperBoundKey, unbinnedContig, core):
+            for binId, core in cores.iteritems():
+                if not distributions.withinDistGC(unbinnedContig, core):
                     continue
                     
-                if not self.__withinDistCov(covDist, covLowerBoundKey, covUpperBoundKey, unbinnedContig, core):
+                if not distributions.withinDistCov(unbinnedContig, core):
                     continue
                     
                 tdDistance = genomicSig.distance(unbinnedContig.tetraSig, core.tetraSig)
-                if not self.__witinDistTD(tdDist, tdKey, tdDistance, unbinnedContig):
+                if not distributions.witinDistTD(tdDistance, unbinnedContig):
                     continue
                     
-                gcDistance = self.__gcDistance(unbinnedContig, core)
-                covDistance = self.__covDistance(unbinnedContig, core)
+                gcDistance = distributions.gcDistance(unbinnedContig, core)
+                covDistance = distributions.covDistance(unbinnedContig, core)
                 
                 distances = [gcDistance, tdDistance, covDistance]
                 for i, distance in enumerate(distances):
                     if distance < minDistances[i]:
                         minDistances[i] = distance
-                        closestCluster[i] = clusterId
+                        closestBin[i] = binId
                         
             # check if unbinned contig is closest to a single core is all three spaces
             bAssigned = False
             bFailedDistanceTest = False
             bInvalidWithAllCores = False
-            if closestCluster[0] != None:
-                if closestCluster[0] == closestCluster[1] and closestCluster[0] == closestCluster[2]:
+            if closestBin[0] != None:
+                if closestBin[0] == closestBin[1] and closestBin[0] == closestBin[2]:
                     bAssigned = True
-                    newClusterNum = cores[closestCluster[0]].clusterNum
+                    newBinNum = cores[closestBin[0]].binId
                 else:
                     bFailedDistanceTest = True
-                    newClusterNum = DBSCAN.NOISE
+                    newBinNum = Greedy.UNBINNED
             else:
                 bInvalidWithAllCores = True
-                newClusterNum = DBSCAN.NOISE
+                newBinNum = Greedy.UNBINNED
                 
             # allow results to be processed or written to file
-            writerQueue.put((index, newClusterNum, unbinnedContig.seqLen, bAssigned, bFailedDistanceTest, bInvalidWithAllCores))
+            writerQueue.put((index, newBinNum, unbinnedContig.length, bAssigned, bFailedDistanceTest, bInvalidWithAllCores))
     
     def __writerThread(self, newAssignments, numUnbinnedContigs, writerQueue):
         """Store results of worker threads in a single thread."""
@@ -150,11 +105,11 @@ class RefineBins(object):
         
         processedSeqs = 0
         while True:
-            index, newClusterNum, unbinnedLen, bAssigned, bFailedDistanceTest, bInvalidWithAllCores = writerQueue.get(block=True, timeout=None)
+            index, newBinNum, unbinnedLen, bAssigned, bFailedDistanceTest, bInvalidWithAllCores = writerQueue.get(block=True, timeout=None)
             if index == None:
                 break
             
-            newAssignments[index] = newClusterNum
+            newAssignments[index] = newBinNum
             
             if self.logger.getEffectiveLevel() <= logging.INFO:
                 processedSeqs += 1
@@ -185,7 +140,7 @@ class RefineBins(object):
         self.logger.info('      - %d of %d (%.2f%%) unassigned contigs failed distance test' % (numFailedDistanceTest, numUnassigned, numFailedDistanceTest*100.0/numUnassigned))
         self.logger.info('    Assigned %.2f of %.2f Mbps (%.2f%%) of the unbinned bases.' % (float(assignedBP)/1e6, float(assignedBP+unassignedBP)/1e6, float(assignedBP)*100/(assignedBP+unassignedBP)))
 
-    def __refineBins(self, unbinnedContigs, cores, gcDist, gcDistPer, tdDist, tdDistPer, covDist, covDistPer, genomicSig, numThreads): 
+    def __refineBins(self, unbinnedContigs, cores, distributions, genomicSig, numThreads): 
         """Process each unbinned contig in parallel."""
         
         # process each unbinned sequence independently
@@ -201,7 +156,7 @@ class RefineBins(object):
             
         newAssignments = mp.Manager().list([None]*len(unbinnedContigs))
         
-        workerProc = [mp.Process(target = self.__workerThread, args = (unbinnedContigs, cores, gcDist, gcDistPer, tdDist, tdDistPer, covDist, covDistPer, genomicSig, workerQueue, writerQueue)) for _ in range(numThreads)]
+        workerProc = [mp.Process(target = self.__workerThread, args = (unbinnedContigs, cores, distributions, genomicSig, workerQueue, writerQueue)) for _ in range(numThreads)]
         writeProc = mp.Process(target = self.__writerThread, args = (newAssignments, len(unbinnedContigs), writerQueue))
         
         writeProc.start()
@@ -215,21 +170,20 @@ class RefineBins(object):
         writerQueue.put((None, None, None, None, None, None))
         writeProc.join()
         
-        for i, clusterNum in enumerate(newAssignments):
-            unbinnedContigs[i].clusterNum = clusterNum
+        for i, binNum in enumerate(newAssignments):
+            unbinnedContigs[i].binId = binNum
  
     def __resolveConflictingContigs(self, unbinnedContigs, binnedContigs):
-        # map contigs (or the partitions comprising a contig) 
-        # to their originating scaffolds
+        # map contigs to their originating scaffolds
         scaffoldsToContigs = defaultdict(list)
         for contig in itertools.chain(unbinnedContigs, binnedContigs):
-            match = re.search('_c[0-9]', contig.seqId)
+            match = re.search('_c[0-9]*$', contig.contigId)
             if match:
-                scaffoldId = contig.seqId[0:match.start()]
+                scaffoldId = contig.contigId[0:match.start()]
                 scaffoldsToContigs[scaffoldId].append(contig)
                 
         rc = ResolveConflicts()
-        rc.run(scaffoldsToContigs, DBSCAN.NOISE)
+        rc.resolve(scaffoldsToContigs, Greedy.UNBINNED)
         
         self.logger.info('')
         self.logger.info('  Resolving scaffolds in conflict: ')
@@ -244,47 +198,47 @@ class RefineBins(object):
         self.logger.info('      - %d (%.2f%%) resolved by reassignment to a single bin' % (rc.numConflictsReassignment, rc.numConflictsReassignment*100.0/max(rc.numConflicts, 1)))
         self.logger.info('      - %d (%.2f%%) resolved by marking all partitions as noise' % (rc.numConflictsToNoise, rc.numConflictsToNoise*100.0/max(rc.numConflicts, 1)))
 
-    def __reportClusters(self, refinedBinFile, unbinnedContigs, binnedContigs, argStr):
-        # determine contigs in each cluster
-        clusterIdToContigs = defaultdict(set)
+    def __reportBins(self, refinedBinFile, unbinnedContigs, binnedContigs, argStr):
+        # determine contigs in each bin
+        binIdToContigs = defaultdict(set)
         for contig in unbinnedContigs:
-            clusterIdToContigs[contig.clusterNum].add(contig)
+            binIdToContigs[contig.binId].add(contig)
             
         for contig in binnedContigs:
-            clusterIdToContigs[contig.clusterNum].add(contig)
+            binIdToContigs[contig.binId].add(contig)
         
         # determine size of each bin in base pairs
-        clusterSizeBP = defaultdict(int)
-        totalClusteredBP = 0
-        totalUnclusteredBP = 0
-        totalClusteredContigs = 0
-        for clusterId in sorted(clusterIdToContigs):
-            clusterSizeBP = 0
-            for contig in clusterIdToContigs[clusterId]:
-                clusterSizeBP += contig.seqLen
-                if clusterId == DBSCAN.NOISE:
-                    totalUnclusteredBP += contig.seqLen
+        binSizeBP = defaultdict(int)
+        totalBinedBP = 0
+        totalUnbinedBP = 0
+        totalBinedContigs = 0
+        for binId in sorted(binIdToContigs):
+            binSizeBP = 0
+            for contig in binIdToContigs[binId]:
+                binSizeBP += contig.length
+                if binId == Greedy.UNBINNED:
+                    totalUnbinedBP += contig.length
                 else:
-                    totalClusteredBP += contig.seqLen
+                    totalBinedBP += contig.length
             
-            if clusterId != DBSCAN.NOISE:
-                self.logger.info('    Contigs in bin %d: %d (%.2f Mbp)' % (clusterId, len(clusterIdToContigs[clusterId]), float(clusterSizeBP)/1e6))
-                totalClusteredContigs += len(clusterIdToContigs[clusterId])
+            if binId != Greedy.UNBINNED:
+                self.logger.info('    Contigs in bin %d: %d (%.2f Mbp)' % (binId, len(binIdToContigs[binId]), float(binSizeBP)/1e6))
+                totalBinedContigs += len(binIdToContigs[binId])
      
         self.logger.info('')
-        self.logger.info('    Total binned contigs: %d (%.2f Mbp)' % (totalClusteredContigs, float(totalClusteredBP)/1e6))
-        self.logger.info('    Total unbinned contigs: %d (%.2f Mbp)' % (len(clusterIdToContigs[DBSCAN.NOISE]), float(totalUnclusteredBP)/1e6))
+        self.logger.info('    Total binned contigs: %d (%.2f Mbp)' % (totalBinedContigs, float(totalBinedBP)/1e6))
+        self.logger.info('    Total unbinned contigs: %d (%.2f Mbp)' % (len(binIdToContigs[Greedy.UNBINNED]), float(totalUnbinedBP)/1e6))
         
-        # save clustering to file
+        # save bining to file
         fout = open(refinedBinFile, 'w')
         fout.write('# ' + argStr + '\n')
-        fout.write('Contig Id\tCluster Id\tLength\tGC\tCoverage\n')
-        for contigId, contigs in clusterIdToContigs.iteritems():
+        fout.write('Contig Id\tBin Id\tLength\tGC\tCoverage\n')
+        for contigId, contigs in binIdToContigs.iteritems():
             for contig in contigs:
-                fout.write(contig.seqId + '\t%d\t%d\t%.3f\t%.3f\n' % (contigId, contig.seqLen, contig.GC, contig.coverage))
+                fout.write(contig.contigId + '\t%d\t%d\t%.3f\t%.3f\n' % (contigId, contig.length, contig.GC, contig.coverage))
                 
-        for contig in clusterIdToContigs[DBSCAN.NOISE]:
-            fout.write(contig.seqId + '\t%s\t%d\t%.3f\t%.3f\n' % ('unbinned', contig.seqLen, contig.GC, contig.coverage))
+        for contig in binIdToContigs[Greedy.UNBINNED]:
+            fout.write(contig.contigId + '\t%s\t%d\t%.3f\t%.3f\n' % ('unbinned', contig.length, contig.GC, contig.coverage))
         
         fout.close()
         
@@ -299,34 +253,18 @@ class RefineBins(object):
         contigTetraFile = os.path.join(preprocessDir, 'contigs.tetra.tsv')
         checkFileExists(contigTetraFile)
         
-        gcDistFile = os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), '..', 'data', 'gc_dist.txt')
-        checkFileExists(gcDistFile)
-        
-        tdDistFile = os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), '..', 'data', 'td_dist.txt')
-        checkFileExists(tdDistFile)
-        
-        coverageDistFile = os.path.join(preprocessDir, 'coverage_dist.txt')
-        checkFileExists(coverageDistFile)
-        
-        # read tetranucleotide signatures
+        # read contig stats
         self.logger.info('  Reading contig statistics.')
         contigStats = readSeqStats(contigStatsFile)
- 
+
         # read tetranucleotide signatures
         self.logger.info('  Reading contig tetranucleotide signatures.')
-        genomicSig = GenomicSignatures(4, 1)
+        genomicSig = GenomicSignatures(DefaultValues.DEFAULT_KMER_SIZE, 1)
         tetraSigs = genomicSig.read(contigTetraFile)
         
         # read bin assignments
         self.logger.info('  Reading core bin assignments.')
-        contigIdToClusterId = {}
-        with open(binningFile) as f:
-            f.readline() # parameter line 
-            f.readline() # header line
-            for line in f:
-                lineSplit = line.split('\t')
-                clusterId = DBSCAN.NOISE if lineSplit[1] == 'unbinned' else int(lineSplit[1])
-                contigIdToClusterId[lineSplit[0]] = clusterId
+        contigIdToBinId = readContigIdtoBinId(binningFile)
     
         # calculate statistics of core bins and unbinned contigs
         self.logger.info('')
@@ -336,31 +274,28 @@ class RefineBins(object):
         unbinnedContigs = []
         binnedContigs = []
         for contigId, contigStat in contigStats.iteritems():  
-            clusterId = contigIdToClusterId.get(contigId, DBSCAN.NOISE)
+            binId = contigIdToBinId.get(contigId, Greedy.UNBINNED)
             
             contigLen, contigGC, contigCov = contigStat
             contigTetraSig = tetraSigs[contigId]
             
-            seq = Sequence(0, contigId, contigLen, contigGC, contigCov)
-            seq.clusterNum = clusterId
-            seq.tetraSig = contigTetraSig
+            contig = Contig(contigId, contigLen, contigGC, contigCov, contigTetraSig)
+            contig.binId = binId
             
-            if clusterId == DBSCAN.NOISE: 
+            if binId == Greedy.UNBINNED: 
                 if contigLen > minSeqLen:
-                    unbinnedContigs.append(seq)
+                    unbinnedContigs.append(contig)
             else:
-                binnedContigs.append(seq)
+                binnedContigs.append(contig)
  
                 # build statistics for core bins
-                if clusterId not in cores:
-                    cores[clusterId] = Sequence(clusterId, 'core_' + str(clusterId), 0, 0, 0)
-                    cores[clusterId].clusterNum = clusterId
-                    cores[clusterId].tetraSig = [0]*genomicSig.numKmers()
+                if binId not in cores:
+                    cores[binId] = Core(binId, 0, 0, 0, [0]*genomicSig.numKmers())
                     
-                core = cores[clusterId]
+                core = cores[binId]
 
-                core.seqLen += contigLen
-                weight = float(contigLen)/core.seqLen
+                core.length += contigLen
+                weight = float(contigLen)/core.length
                 core.GC = contigGC*weight + core.GC*(1.0-weight)
                 core.coverage = contigCov*weight + core.coverage*(1.0-weight)
                 for i in xrange(0, len(core.tetraSig)):
@@ -373,22 +308,13 @@ class RefineBins(object):
         self.logger.info('')
         self.logger.info('  Reading GC, TD, and coverage distributions.')
 
-        with open(gcDistFile, 'r') as f:
-            s = f.read()
-            gcDist = ast.literal_eval(s)
-            
-        with open(tdDistFile, 'r') as f:
-            s = f.read()
-            tdDist = ast.literal_eval(s)
-        
-        with open(coverageDistFile) as f:
-            s = f.read()
-            covDist = ast.literal_eval(s)
+        gcDist, tdDist, covDist = readDistributions(preprocessDir, gcDistPer, tdDistPer, covDistPer)
             
         # refine bins
         self.logger.info('')
         self.logger.info('  Refining bins:')
-        self.__refineBins(unbinnedContigs, cores, gcDist, gcDistPer, tdDist, tdDistPer, covDist, covDistPer, genomicSig, numThreads)
+        distributions = Distributions(gcDist, gcDistPer, tdDist, tdDistPer, covDist, covDistPer)
+        self.__refineBins(unbinnedContigs, cores, distributions, genomicSig, numThreads)
                 
         # resolve conflicts between contigs originating on the same scaffold
         # and use the conflicts as a measure of the binning quality
@@ -397,5 +323,5 @@ class RefineBins(object):
         # report and save results of binning
         self.logger.info('')
         self.logger.info('  Refined bins:')
-        self.__reportClusters(refinedBinFile, unbinnedContigs, binnedContigs, argStr)
+        reportBins(refinedBinFile, unbinnedContigs + binnedContigs, argStr)
         

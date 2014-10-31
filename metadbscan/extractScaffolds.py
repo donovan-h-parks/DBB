@@ -22,30 +22,38 @@ import re
 from collections import defaultdict
 
 from common import checkFileExists, isDirEmpty
-from seqUtils import readFasta
+from seqUtils import readFasta, readSeqStats
 
-from dbscan import DBSCAN, readSeqStatsForClusters
-       
+from greedy import Greedy, readSeqStatsForBins 
 class ExtractScaffolds(object):
     def __init__(self):
         self.logger = logging.getLogger()
         
-    def __saveClusters(self, scaffoldFile, binningFile, outputDir):
-        # read bin assignment of each contig partition
-        seqStatsForClusters = readSeqStatsForClusters(binningFile)
+    def __saveBins(self, preprocessDir, scaffoldFile, binningFile, outputDir):
+        # verify inputs
+        scaffoldStatsFile = os.path.join(preprocessDir, 'scaffolds.seq_stats.tsv')
+        checkFileExists(scaffoldStatsFile)
         
-        # get cluster for each scaffold
-        clusterIdToScaffoldIds = defaultdict(set)
-        for clusterId, contigStats in seqStatsForClusters.iteritems():
-            if clusterId == DBSCAN.NOISE:
+        # read scaffold stats
+        self.logger.info('    Reading scaffold statistics.')
+        scaffoldStats = readSeqStats(scaffoldStatsFile)
+        
+        # read bin assignment of each contig partition
+        self.logger.info('    Reading bin assignments.')
+        seqStatsForBins = readSeqStatsForBins(binningFile)
+        
+        # get bin for each scaffold
+        binIdToScaffoldIds = defaultdict(set)
+        for binId, contigStats in seqStatsForBins.iteritems():
+            if binId == Greedy.UNBINNED:
                 continue
             
             for contigStats in contigStats:
                 contigId, _, _, _ = contigStats
-                match = re.search('_c[0-9]', contigId)
+                match = re.search('_c[0-9]*$', contigId)
                 scaffoldId = contigId[0:match.start()] if match else contigId
                     
-                clusterIdToScaffoldIds[clusterId].add(scaffoldId)
+                binIdToScaffoldIds[binId].add(scaffoldId)
 
         # read contigs
         scaffolds = readFasta(scaffoldFile)
@@ -59,17 +67,18 @@ class ExtractScaffolds(object):
         self.logger.info('  Bin scaffold statistics:')
         totalBinnedBPs = 0
         totalBinnedScaffolds = 0
-        for clusterId, scaffoldIds in clusterIdToScaffoldIds.iteritems():
+        for binId, scaffoldIds in binIdToScaffoldIds.iteritems():
             binnedBPs = 0
             
-            fout = open(os.path.join(outputDir, 'bin_' + str(clusterId) + '.fna'), 'w')
+            fout = open(os.path.join(outputDir, 'bin_' + str(binId) + '.fna'), 'w')
             for scaffoldId in scaffoldIds:
-                fout.write('>' + scaffoldId + '\n')
+                stats = scaffoldStats[scaffoldId]
+                fout.write('>' + scaffoldId + ' [length=%d,GC=%.2f,coverage=%.1f]\n' % (stats[0], stats[1], stats[2]))
                 fout.write(scaffolds[scaffoldId] + '\n')
                 binnedBPs += len(scaffolds[scaffoldId])   
             fout.close()
             
-            self.logger.info('    Bin %d: %d scaffolds (%.2f Mbp)' % (clusterId, len(scaffoldIds), float(binnedBPs)/1e6))
+            self.logger.info('    Bin %d: %d scaffolds (%.2f Mbp)' % (binId, len(scaffoldIds), float(binnedBPs)/1e6))
             
             totalBinnedBPs += binnedBPs
             totalBinnedScaffolds += len(scaffoldIds)
@@ -78,7 +87,7 @@ class ExtractScaffolds(object):
         self.logger.info('    Total binned scaffolds: %d (%.2f Mbp)' % (totalBinnedScaffolds, float(totalBinnedBPs)/1e6))
         self.logger.info('    Total unbinned scaffolds: %d (%.2f Mbp)' % (len(scaffolds) - totalBinnedScaffolds, float(totalBPs - totalBinnedBPs)/1e6))
                  
-    def run(self, scaffoldFile, binningFile, binDir):
+    def run(self, preprocessDir, scaffoldFile, binningFile, binDir):
         # verify inputs
         checkFileExists(scaffoldFile)
         checkFileExists(binningFile)
@@ -88,4 +97,4 @@ class ExtractScaffolds(object):
             sys.exit()
         
         # report and save results of binning
-        self.__saveClusters(scaffoldFile, binningFile, binDir)
+        self.__saveBins(preprocessDir, scaffoldFile, binningFile, binDir)

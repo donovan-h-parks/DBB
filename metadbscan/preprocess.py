@@ -19,8 +19,8 @@
 
 import os
 import sys
-import logging
 import random
+import logging
 import multiprocessing as mp
 from collections import defaultdict
 from operator import itemgetter
@@ -30,13 +30,15 @@ import numpy as np
 
 from genomicSignatures import GenomicSignatures
 from common import checkFileExists
-from seqUtils import readFasta
+from defaultValues import DefaultValues
+from seqUtils import readFasta, baseCount
+from splitScaffolds import SplitScaffolds
 
 class ReadLoader:
     """Callback for counting aligned reads with pysam.fetch"""
-    def __init__(self, refLength):
-        self.minAlignPer = 0.98
-        self.maxEditDistPer = 0.02
+    def __init__(self, refLength, minAlignPer, maxEditDistPer):
+        self.minAlignPer = minAlignPer
+        self.maxEditDistPer = maxEditDistPer
         
         self.numReads = 0
         self.numMappedReads = 0
@@ -86,118 +88,128 @@ class Preprocess(object):
         self.logger = logging.getLogger()
         
     def __calculateGC(self, seq):
-        seq = seq.upper()
+        a, c, g, t = baseCount(seq)
 
-        gc = at = 0
-        for base in seq:
-            if base == 'G' or base == 'C':
-                gc += 1
-            elif base == 'A' or base == 'T':
-                at += 1
+        gc = g + c
+        at = a + t
 
         return float(gc) / (gc+at)
     
-    def __partitions(self, seqLen, blockSize):
-        partitions = []
-        
-        # break contig into partitions of a specific size      
-        numBlocks = int(seqLen / blockSize)
-        if numBlocks == 0 or numBlocks == 1:
-            # sequence is too short to break into partitions
-            partitions.append([0, seqLen])
-        else:            
-            blockStepSize = int(seqLen / numBlocks) 
-            
-            for blockIndex in xrange(0, numBlocks-1):
-                partitions.append([blockStepSize*blockIndex, blockStepSize*(blockIndex+1)])
-            
-            # add last block and make sure it runs to the end of the sequence
-            partitions.append([blockStepSize*(numBlocks-1), seqLen])
-            
-        return partitions
-
-    def __workerThread(self, bamFile, contigs, genomicSig, minSeqLen, percent, blockSize, queueIn, queueOut):
+    def __workerThread(self, bamFile, scaffolds, genomicSig, minSeqLen, percent, minN, minAlignLen, maxEditDist, coverageType, queueIn, queueOut):
         """Process each data item in parallel."""
+        
+        splitScaffolds = SplitScaffolds()
+        
         while True:
-            contigIds, contigLens = queueIn.get(block=True, timeout=None)
-            if contigIds == None:
+            scaffoldIds, scaffoldLens = queueIn.get(block=True, timeout=None)
+            if scaffoldIds == None:
                 break
 
             bamfile = pysam.Samfile(bamFile, 'rb')
 
-            for contigId, contigLen in zip(contigIds, contigLens):
-                readLoader = ReadLoader(contigLen)
-                bamfile.fetch(contigId, 0, contigLen, callback = readLoader)
+            for scaffoldId, scaffoldLen in zip(scaffoldIds, scaffoldLens):
+                readLoader = ReadLoader(scaffoldLen, minAlignLen, maxEditDist)
+                bamfile.fetch(scaffoldId, 0, scaffoldLen, callback = readLoader)
+                
+                # identify contigs in scaffold and calculate contig statistics
+                scaffoldSeq = scaffolds[scaffoldId]
+                contigs = splitScaffolds.splits(scaffoldId, scaffoldSeq, minN)
+                
+                # determine nucleotide mask for scaffold
+                ntMask = []
+                for contigId, split in contigs.iteritems():
+                    ntMask += range(split[0], split[1])
 
-                contigGC = self.__calculateGC(contigs[contigId])
-                contigCoverage = np.mean(readLoader.coverage)
-                contigTetraSig = genomicSig.seqSignature(contigs[contigId])
-                
-                # calculate sequence statistics for contig partitions
-                partitions = self.__partitions(contigLen, blockSize)
-                
-                partitionSeqStats = {}
-                if len(partitions) > 1:
-                    for partitionIndex, partition in enumerate(partitions):
-                        start, end = partition
-                        partitionLen = end - start
-                        partitionGC = self.__calculateGC(contigs[contigId][start:end])
-                        partitionCoverage = np.mean(readLoader.coverage[start:end])
-                        tetraSig = genomicSig.seqSignature(contigs[contigId][start:end])
-                        partitionSeqStats[contigId + '_p' + str(partitionIndex)] = [partitionLen, partitionGC, partitionCoverage, tetraSig]
+                # calculate scaffold statistics
+                scaffoldGC = self.__calculateGC(scaffoldSeq)
+                if coverageType == 'mean':
+                    scaffoldCoverage = np.mean(readLoader.coverage[ntMask])
+                elif coverageType == 'trimmed_mean':
+                    sortedValues = sorted(readLoader.coverage[ntMask])
+                    lowerIndex = int(0.1 * len(sortedValues)) + 1
+                    upperIndex = len(sortedValues) - int(0.1 * len(sortedValues)) - 1
+                    scaffoldCoverage = np.mean(sortedValues[lowerIndex:upperIndex])                  
                 else:
-                    partitionSeqStats[contigId] = [contigLen, contigGC, contigCoverage, contigTetraSig]
+                    # unknown coverage type
+                    self.logger.error('Unknown coverage type.') 
+                    sys.exit(-1)
+                            
+                scaffoldTetraSig = genomicSig.seqSignature(scaffoldSeq)
+                scaffoldSeqStats = [scaffoldLen, scaffoldGC, scaffoldCoverage, scaffoldTetraSig]
+                       
+                # calculate contig statistics
+                contigSeqStats = {}
+                if len(contigs) > 1:
+                    for contigId, split in contigs.iteritems():
+                        contigLen = split[1] - split[0]
+                        contigGC = self.__calculateGC(scaffoldSeq[split[0]:split[1]])
+                        if coverageType == 'mean':
+                            contigCoverage = np.mean(readLoader.coverage[split[0]:split[1]])
+                        else:
+                            sortedValues = sorted(readLoader.coverage[split[0]:split[1]])
+                            lowerIndex = int(0.1* len(sortedValues)) + 1
+                            upperIndex = len(sortedValues) - int(0.1 * len(sortedValues)) - 1
+                            contigCoverage = np.mean(sortedValues[lowerIndex:upperIndex])
+                            
+                        tetraSig = genomicSig.seqSignature(scaffoldSeq[split[0]:split[1]])
+                        contigSeqStats[contigId] = [contigLen, contigGC, contigCoverage, tetraSig, split[0], split[1]]
+                else:
+                    contigSeqStats[scaffoldId] = scaffoldSeqStats + [0, scaffoldSeq]
                     
                 # calculate coverage distribution parameters
                 covDist = defaultdict(list)
                 testLen = minSeqLen
+                
+                for contigId, contigStats in contigSeqStats.iteritems():      
+                    contigLen, contigGC, contigCoverage, tetraSig, start, _ = contigStats
                     
-                while contigLen >= 4*testLen:
-                    numTestPts = contigLen/testLen
-                    
-                    perErrors = []
-                    for i in xrange(0, numTestPts):
-                        testCoverage = np.mean(readLoader.coverage[testLen*i:testLen*(i+1)])
-                        perErrors.append( (testCoverage - contigCoverage)*100.0 / contigCoverage)
+                    while contigLen >= 4*testLen:
+                        numTestPts = contigLen/testLen
                         
-                    # limit contribution of any sequences to the coverage distribution, and
-                    # ensure the number of test points over all sequences is kept to a reasonble number
-                    if numTestPts > 1000:
-                        covDist[testLen] = random.sample(perErrors, 1000)
-                    else:
-                        covDist[testLen] = perErrors
-                      
-                    testLen = int(testLen + testLen*percent)
+                        perErrors = []
+                        for i in xrange(0, numTestPts):
+                            testCoverage = np.mean(readLoader.coverage[testLen*i + start:testLen*(i+1) + start])
+                            perErrors.append( (testCoverage - contigCoverage)*100.0 / contigCoverage)
+                            
+                        # limit contribution of any sequences to the coverage distribution, and
+                        # ensure the number of test points over all sequences is kept to a reasonble number
+                        if numTestPts > 1000:
+                            covDist[testLen] = random.sample(perErrors, 1000)
+                        else:
+                            covDist[testLen] = perErrors
+                          
+                        testLen = int(testLen + testLen*percent)
 
-                # save results for this contig
-                contigSeqStats = [contigLen, contigGC, contigCoverage, contigTetraSig]
+                # report mapping statistics
                 readMappingStats = [readLoader.numReads, readLoader.numDuplicates, readLoader.numSecondary, 
                                     readLoader.numFailedQC, readLoader.numFailedAlignLen, readLoader.numFailedEditDist, 
                                     readLoader.numFailedProperPair, readLoader.numMappedReads]
-                queueOut.put((contigId, contigSeqStats, partitionSeqStats, readMappingStats, covDist))
+                
+                queueOut.put((scaffoldId, scaffoldSeqStats, contigSeqStats, readMappingStats, covDist))
 
             bamfile.close()
 
-    def __writerThread(self, genomicSig, blockSize, covDistFile, contigSeqStatsFile, contigTetraSigFile, partitionSeqStatsFile, partitionTetraSigFile, numRefSeqs, writerQueue):
+    def __writerThread(self, genomicSig, scaffoldSeqStatsFile, scaffoldTetraSigFile, contigSeqStatsFile, contigTetraSigFile, covDistFile, numRefSeqs, writerQueue):
         """Store or write results of worker threads in a single thread."""
+        
+        scaffoldStatsOut = open(scaffoldSeqStatsFile, 'w')
+        scaffoldStatsOut.write('Scaffold Id\tLength\tGC\tCoverage (mean depth)\tMapped reads\n')
+        
+        scaffoldTetraSigOut = open(scaffoldTetraSigFile, 'w')
+        scaffoldTetraSigOut.write('Scaffold Id')
+        for kmer in genomicSig.canonicalKmerOrder():
+            scaffoldTetraSigOut.write('\t' + kmer)
+        scaffoldTetraSigOut.write('\n')
+        
         contigStatsOut = open(contigSeqStatsFile, 'w')
-        contigStatsOut.write('Contig Id\tLength\tGC\tCoverage (mean depth)\tMapped reads\n')
+        contigStatsOut.write('Contig Id\tLength\tGC\tCoverage (mean depth)\n')
         
         contigTetraSigOut = open(contigTetraSigFile, 'w')
-        contigTetraSigOut.write('Sequence Id')
+        contigTetraSigOut.write('Contig Id')
         for kmer in genomicSig.canonicalKmerOrder():
             contigTetraSigOut.write('\t' + kmer)
         contigTetraSigOut.write('\n')
         
-        partitionStatsOut = open(partitionSeqStatsFile, 'w')
-        partitionStatsOut.write('Partition Id\tLength\tGC\tCoverage (mean depth)\n')
-        
-        partitionTetraSigOut = open(partitionTetraSigFile, 'w')
-        partitionTetraSigOut.write('Sequence Id')
-        for kmer in genomicSig.canonicalKmerOrder():
-            partitionTetraSigOut.write('\t' + kmer)
-        partitionTetraSigOut.write('\n')
-
         totalReads = 0
         totalDuplicates = 0
         totalSecondary = 0
@@ -208,13 +220,14 @@ class Preprocess(object):
         totalMappedReads = 0
 
         processedRefSeqs = 0
-        processedPartitions = 0
+        processedContigs = 0
+        contigSizeDist = defaultdict(int)
         
         globalCovDist = defaultdict(list)
         
         while True:
-            contigId, contigSeqStats, partitionSeqStats, readMappingStats, covDist = writerQueue.get(block=True, timeout=None)
-            if contigId == None:
+            scaffoldId, scaffoldSeqStats, contigSeqStats, readMappingStats, covDist = writerQueue.get(block=True, timeout=None)
+            if scaffoldId == None:
                 break
             
             for testLen, testPts in covDist.iteritems():
@@ -222,7 +235,7 @@ class Preprocess(object):
 
             if self.logger.getEffectiveLevel() <= logging.INFO:
                 processedRefSeqs += 1
-                statusStr = '    Processed %d of %d (%.2f%%) contigs.' % (processedRefSeqs, numRefSeqs, float(processedRefSeqs)*100/numRefSeqs)
+                statusStr = '    Processed %d of %d (%.2f%%) scaffolds.' % (processedRefSeqs, numRefSeqs, float(processedRefSeqs)*100/numRefSeqs)
                 sys.stdout.write('%s\r' % statusStr)
                 sys.stdout.flush()
 
@@ -235,26 +248,33 @@ class Preprocess(object):
                 totalFailedProperPair += readMappingStats[6]
                 totalMappedReads += readMappingStats[7]
 
-            contigStatsOut.write(contigId + '\t' + str(contigSeqStats[0]) + '\t' + str(contigSeqStats[1]))
-            contigStatsOut.write('\t' + str(contigSeqStats[2]) + '\t' + str(readMappingStats[7]) + '\n')
+            scaffoldStatsOut.write(scaffoldId + '\t' + str(scaffoldSeqStats[0]) + '\t' + str(scaffoldSeqStats[1]))
+            scaffoldStatsOut.write('\t' + str(scaffoldSeqStats[2]) + '\t' + str(readMappingStats[7]) + '\n')
             
-            contigTetraSigOut.write(contigId)
-            contigTetraSigOut.write('\t' + '\t'.join(map(str, contigSeqStats[3])))
-            contigTetraSigOut.write('\n')
+            scaffoldTetraSigOut.write(scaffoldId)
+            scaffoldTetraSigOut.write('\t' + '\t'.join(map(str, scaffoldSeqStats[3])))
+            scaffoldTetraSigOut.write('\n')
             
-            for partitionId, partitionStats in partitionSeqStats.iteritems():
-                processedPartitions += 1
-                partitionStatsOut.write(partitionId + '\t' + str(partitionStats[0]))
-                partitionStatsOut.write('\t' + str(partitionStats[1]) + '\t' + str(partitionStats[2]) + '\n')
+            for contigId, contigStats in contigSeqStats.iteritems():
+                processedContigs += 1
+                contigStatsOut.write(contigId + '\t' + str(contigStats[0]))
+                contigStatsOut.write('\t' + str(contigStats[1]) + '\t' + str(contigStats[2]) + '\n')
                 
-                partitionTetraSigOut.write(partitionId)
-                partitionTetraSigOut.write('\t' + '\t'.join(map(str, partitionStats[3])))
-                partitionTetraSigOut.write('\n')
+                if contigStats[0] >= 10000:
+                    contigSizeDist[10000] += 1
+                if contigStats[0] >= 5000:
+                    contigSizeDist[5000] += 1
+                if contigStats[0] >= 2000:
+                    contigSizeDist[2000] += 1
+                if contigStats[0] >= 1000:
+                    contigSizeDist[1000] += 1
+                
+                contigTetraSigOut.write(contigId)
+                contigTetraSigOut.write('\t' + '\t'.join(map(str, contigStats[3])))
+                contigTetraSigOut.write('\n')
 
         if self.logger.getEffectiveLevel() <= logging.INFO:
-            statusStr = '    Processing %d of %d (%.2f%%) contigs.' % (processedRefSeqs, numRefSeqs, float(processedRefSeqs)*100/numRefSeqs)
-            sys.stdout.write('%s\n' % statusStr)
-            sys.stdout.flush()
+            sys.stdout.write('\n')
 
             print ''
             print '  Read mapping statistics:'
@@ -268,13 +288,14 @@ class Preprocess(object):
             print '      # reads not properly paired: %d (%.1f%%)' % (totalFailedProperPair, float(totalFailedProperPair)*100/totalReads)
             
             print ''
-            print '  Contigs longer than %d bp were partitioned.' % blockSize
-            print '    Total sequences after partitioning: %d' % processedPartitions
+            print '  Total contigs within scaffolds: %d' % processedContigs
+            for contigLen in sorted(contigSizeDist.keys()):
+                print '    Contigs >= %d bp: %d' % (contigLen, contigSizeDist[contigLen])
 
+        scaffoldStatsOut.close()
+        scaffoldTetraSigOut.close()
         contigStatsOut.close()
         contigTetraSigOut.close()
-        partitionStatsOut.close()
-        partitionTetraSigOut.close()
         
         self.__calculateCoverageDistribution(globalCovDist, covDistFile)
 
@@ -300,14 +321,14 @@ class Preprocess(object):
         
         self.logger.info('    Min. distribution length: %d, max. distribution length: %d' % (min(t.keys()), max(t.keys())))
         
-    def run(self, contigFile, bamFile, minSeqLen, percent, blockSize, numThreads, outputDir, argsStr):
-        checkFileExists(contigFile)
+    def run(self, scaffoldFile, bamFile, minSeqLen, percent, minN, minAlignLen, maxEditDist, coverageType, numThreads, outputDir, argsStr):
+        checkFileExists(scaffoldFile)
         checkFileExists(bamFile)
         
-        # read contigs
-        self.logger.info('  Reading contigs.')
-        contigs = readFasta(contigFile)
-        self.logger.info('    Contigs: %d' % len(contigs))
+        # read scaffolds
+        self.logger.info('  Reading scaffolds.')
+        scaffolds = readFasta(scaffoldFile)
+        self.logger.info('    Scaffolds: %d' % len(scaffolds))
 
         # process reference sequences in parallel
         self.logger.info('')
@@ -325,11 +346,11 @@ class Preprocess(object):
             if refLen >= minSeqLen:
                 filteredRefSeqs.append([refSeqId, refLen])
                 
-        self.logger.info('    Reference contigs > %d bps: %d' % (minSeqLen, len(filteredRefSeqs)))
+        self.logger.info('    Reference scaffolds >= %d bps: %d' % (minSeqLen, len(filteredRefSeqs)))
 
         # populate each thread with reference sequence to process
         # Note: to distribute the work load in a reasonably even manner
-        # reference sequences are added in desending order of size and 
+        # reference sequences are added in descending order of size and 
         # to the reference list with the fewest total base pairs
         refSeqLists = [[] for _ in range(numThreads)]
         refLenLists = [[] for _ in range(numThreads)]
@@ -349,42 +370,50 @@ class Preprocess(object):
         for _ in range(numThreads):
             workerQueue.put((None, None))
 
-        gs = GenomicSignatures(4, 1)
+        gs = GenomicSignatures(DefaultValues.DEFAULT_KMER_SIZE, 1)
 
-        self.logger.info('')
-        self.logger.info('  Processing reference contigs.')
-        workerProc = [mp.Process(target = self.__workerThread, args = (bamFile, contigs, gs, minSeqLen, percent, blockSize, workerQueue, writerQueue)) for _ in range(numThreads)]
-        
-        covDistFile = os.path.join(outputDir, 'coverage_dist.txt') 
-        contigSeqStatFile = os.path.join(outputDir, 'contigs.seq_stats.tsv')
-        contigTetraSigFile = os.path.join(outputDir, 'contigs.tetra.tsv') 
-        partitionSeqStatFile = os.path.join(outputDir, 'partitions.seq_stats.tsv')  
-        partitionTetraSigFile = os.path.join(outputDir, 'partitions.tetra.tsv')   
-        
-        writeProc = mp.Process(target = self.__writerThread, args = (gs, blockSize, covDistFile, contigSeqStatFile, contigTetraSigFile, partitionSeqStatFile, partitionTetraSigFile, len(filteredRefSeqs), writerQueue))
-
-        writeProc.start()
-
-        for p in workerProc:
-            p.start()
-
-        for p in workerProc:
-            p.join()
-
-        writerQueue.put((None, None, None, None, None))
-        writeProc.join()
-        
-        # report calculate parameters and statistics
-        self.logger.info('')
-        self.logger.info('  Contig statistics written to: ' + contigSeqStatFile)
-        self.logger.info('  Tetranucleotide signatures for contigs written to: ' + contigTetraSigFile)
-        self.logger.info('  Partition statistics written to: ' + partitionSeqStatFile)
-        self.logger.info('  Tetranucleotide signatures for partitions written to: ' + partitionTetraSigFile)
-        self.logger.info('  Coverage distribution parameters written to: ' + covDistFile)
+        try:
+            self.logger.info('')
+            self.logger.info('  Processing reference scaffolds.')
+            workerProc = [mp.Process(target = self.__workerThread, args = (bamFile, scaffolds, gs, minSeqLen, percent, minN, minAlignLen, maxEditDist, coverageType, workerQueue, writerQueue)) for _ in range(numThreads)]
+            
+            scaffoldSeqStatFile = os.path.join(outputDir, 'scaffolds.seq_stats.tsv')  
+            scaffoldTetraSigFile = os.path.join(outputDir, 'scaffolds.tetra.tsv')    
+            contigSeqStatFile = os.path.join(outputDir, 'contigs.seq_stats.tsv')
+            contigTetraSigFile = os.path.join(outputDir, 'contigs.tetra.tsv') 
+            covDistFile = os.path.join(outputDir, 'coverage_dist.txt')
+            
+            writeProc = mp.Process(target = self.__writerThread, args = (gs, scaffoldSeqStatFile, scaffoldTetraSigFile, contigSeqStatFile, contigTetraSigFile, covDistFile, len(filteredRefSeqs), writerQueue))
+    
+            writeProc.start()
+    
+            for p in workerProc:
+                p.start()
+    
+            for p in workerProc:
+                p.join()
+    
+            writerQueue.put((None, None, None, None, None))
+            writeProc.join()
+        except:
+            # make sure all processes are terminated
+            for p in workerProc:
+                p.terminate()
+                
+            writeProc.terminate()
         
         # write command line arguments to file
-        # write arguments to file
         parameterFile = os.path.join(outputDir, 'parameters.txt')
         fout = open(parameterFile, 'w')
         fout.write(argsStr)
         fout.close()
+        
+        # report calculate parameters and statistics
+        self.logger.info('')
+        self.logger.info('  Scaffold statistics written to: ' + scaffoldSeqStatFile)
+        self.logger.info('  Tetranucleotide signatures for scaffolds written to: ' + scaffoldTetraSigFile)
+        self.logger.info('  Contig statistics written to: ' + contigSeqStatFile)
+        self.logger.info('  Tetranucleotide signatures for contigs written to: ' + contigTetraSigFile)
+        self.logger.info('  Coverage distribution parameters written to: ' + covDistFile)
+        self.logger.info('  Preprocessing parameters written to: ' + parameterFile)
+        

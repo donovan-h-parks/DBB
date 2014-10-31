@@ -34,7 +34,6 @@ def readSeqStats(seqStatsFile):
             
     return seqStats
             
-
 def readFasta(fastaFile):
     '''Read sequences from FASTA file.'''
     try:

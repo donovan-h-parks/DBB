@@ -24,7 +24,7 @@ import random
 from AbstractPlot import AbstractPlot
 from gcCoveragePlot import GcCoveragePlot
 
-from metadbscan.dbscan import DBSCAN, readSeqStatsForClusters
+from metadbscan.greedy import Greedy, readSeqStatsForBins
 
 import numpy as np
 
@@ -36,7 +36,7 @@ class TetraPcaPlot(AbstractPlot):
         
     def plot(self, binningFile, seqIds, pc, variance, minSeqLen, minCoreLen, bBoundingBoxes, bLabels, highlightedClusterId = None): 
         # read clustering of sequences
-        seqStatsForClusters = readSeqStatsForClusters(binningFile)
+        seqStatsForClusters = readSeqStatsForBins(binningFile)
         
         # ensure pc matrix has at least 3 dimensions
         if pc.shape[1] == 1:
@@ -77,7 +77,7 @@ class TetraPcaPlot(AbstractPlot):
                     drPC3.append(pc[seqIndex, 2])
                 
             if highlightedClusterId == None:
-                if clusterId != DBSCAN.NOISE:
+                if clusterId != Greedy.UNBINNED:
                     color = (random.uniform(0.3, 1.0), random.uniform(0.3, 1.0), random.uniform(0.3, 1.0))
                     clusterIdToColour[clusterId] = color
                     alpha = 0.7
@@ -112,7 +112,7 @@ class TetraPcaPlot(AbstractPlot):
                 pc1 = drPC1 + corePC1
                 pc2 = drPC2 + corePC2
                 pc3 = drPC3 + corePC3
-                if len(pc1) > 1 and clusterId != DBSCAN.NOISE:
+                if len(pc1) > 1 and clusterId != Greedy.UNBINNED:
                     self.boundingBox(zip(pc1, pc2), axesPC1vsPC2, str(clusterId), bBoundingBoxes, bLabels)
                     self.boundingBox(zip(pc3, pc2), axesPC3vsPC2, str(clusterId), bBoundingBoxes, bLabels)
                     self.boundingBox(zip(pc1, pc3), axesPC1vsPC3, str(clusterId), bBoundingBoxes, bLabels)

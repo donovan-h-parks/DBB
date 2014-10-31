@@ -21,22 +21,17 @@ import sys
 import logging
 import multiprocessing as mp
 
-from distributions import findNearest, inRange
+from distributions import Distributions
 
 import numpy as np
 
 class GcNeighbours(object):
-    def __init__(self):
+    def __init__(self, fixedSeqLen):
         self.logger = logging.getLogger()
+        self.fixedSeqLen = fixedSeqLen
 
-    def __workerThread(self, seqs, gcDist, gcDistPer, queueIn, queueOut):
-        """Process each data item in parallel."""
-        
-        sampleMeanGC = gcDist.keys()[0]
-        sampleSeqLen = gcDist[sampleMeanGC].keys()[0]
-        d = gcDist[sampleMeanGC][sampleSeqLen]
-        lowerBoundKey = findNearest(d.keys(), (100 - gcDistPer)/2.0)
-        upperBoundKey = findNearest(d.keys(), (100 + gcDistPer)/2.0)
+    def __workerThread(self, seqs, distributions, queueIn, queueOut):
+        """Process each data item in parallel."""
             
         while True:
             index, seqI = queueIn.get(block=True, timeout=None)
@@ -45,23 +40,14 @@ class GcNeighbours(object):
 
             row = np.zeros(len(seqs))
             for j, seqJ in enumerate(seqs):
-                if seqI.seqLen > seqJ.seqLen:
-                    meanGC = seqI.GC
-                    gcDiff = seqJ.GC - meanGC
-                    seqLen = seqJ.seqLen
+                if seqI.length > seqJ.length:
+                    core = seqI
+                    unbinned = seqJ
                 else:
-                    meanGC = seqJ.GC
-                    gcDiff = seqI.GC - meanGC
-                    seqLen = seqI.seqLen
-
-                closestMeanGC = findNearest(gcDist.keys(), meanGC)
-                closestSeqLen = findNearest(gcDist[closestMeanGC].keys(), seqLen)
-
-                d = gcDist[closestMeanGC][closestSeqLen]
-                lowerBound = d[lowerBoundKey]
-                upperBound = d[upperBoundKey]
+                    core = seqJ
+                    unbinned = seqI
                 
-                if inRange(gcDiff, lowerBound, upperBound):
+                if distributions.withinDistGC(unbinned, core, self.fixedSeqLen):
                     row[j] = 1
 
             # allow results to be processed or written to file
@@ -77,7 +63,7 @@ class GcNeighbours(object):
             
             if self.logger.getEffectiveLevel() <= logging.INFO:
                 processedItems += 1
-                statusStr = '    Finished processing %d of %d (%.2f%%) sequences.' % (processedItems, numDataItems, float(processedItems)*100/numDataItems)
+                statusStr = '      Finished processing %d of %d (%.2f%%) contigs.' % (processedItems, numDataItems, float(processedItems)*100/numDataItems)
                 sys.stdout.write('%s\r' % statusStr)
                 sys.stdout.flush()
                 
@@ -99,7 +85,8 @@ class GcNeighbours(object):
         
         gcNeighbours = mp.Manager().list([None]*len(seqs))
 
-        workerProc = [mp.Process(target = self.__workerThread, args = (seqs, gcDist, gcDistPer, workerQueue, writerQueue)) for _ in range(threads)]
+        distributions = Distributions(gcDist, gcDistPer, None, None, None, None)
+        workerProc = [mp.Process(target = self.__workerThread, args = (seqs, distributions, workerQueue, writerQueue)) for _ in range(threads)]
         writeProc = mp.Process(target = self.__writerThread, args = (gcNeighbours, len(seqs), writerQueue))
         
         writeProc.start()

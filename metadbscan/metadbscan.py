@@ -21,7 +21,7 @@ __author__ = 'Donovan Parks'
 __copyright__ = 'Copyright 2013'
 __credits__ = ['Donovan Parks']
 __license__ = 'GPL3'
-__version__ = '0.0.2'
+__version__ = '0.0.3'
 __maintainer__ = 'Donovan Parks'
 __email__ = 'donovan.parks@gmail.com'
 __status__ = 'Development'
@@ -32,13 +32,16 @@ import logging
 
 from timeKeeper import TimeKeeper
 
-from common import isDirEmpty, checkFileExists
+from common import isDirEmpty
 
 from preprocess import Preprocess
-from dbscan import DBSCAN, readSeqStatsForClusters
+from greedy import Greedy, readSeqStatsForBins
 from refineBins import RefineBins
 from extractScaffolds import ExtractScaffolds
-from splitScaffolds import SplitScaffolds
+from compare import Compare
+from merge import Merge
+from unbinned import Unbinned
+from expand import Expand
 from pca import PCA
 
 from plots.gcCoveragePlot import GcCoveragePlot
@@ -75,20 +78,20 @@ class MetaDBSCAN(object):
         argsStr = '\n'.join(map(str.strip, str(args).replace('Namespace(', '').replace(')', '').split(',')))
   
         preprocess = Preprocess()
-        preprocess.run(args.contig_file, args.bam_file, args.min_seq_len, args.percent, args.block_size, args.threads, args.output_dir, argsStr)
+        preprocess.run(args.scaffold_file, args.bam_file, args.min_seq_len, args.percent, args.min_n, args.min_align, args.max_edit_dist, args.coverage_type, args.threads, args.output_dir, argsStr)
    
         self.timeKeeper.printTimeStamp()  
         
-    def bin(self, args):
+    def core(self, args):
         self.logger.info('')
         self.logger.info('*******************************************************************************')
-        self.logger.info(' [MetaDBSCAN - bin] Bin contig partitions into cores.')
+        self.logger.info(' [MetaDBSCAN - core] Bin contigs into cores using a greedy approach.')
         self.logger.info('*******************************************************************************')
         
         argsStr = ', '.join(map(str.strip, str(args).replace('Namespace(', '').replace(')', '').split(',')))
         
-        dbscan = DBSCAN()
-        dbscan.run(args.preprocess_dir, args.min_seq_len, args.min_bin_size, args.gc_dist_per, args.td_dist_per, args.cov_dist_per, args.min_core_bps, args.min_core_len, args.threads, args.binning_file, argsStr)
+        greedy = Greedy()
+        greedy.run(args.preprocess_dir, args.min_seq_len, args.min_bin_size, args.build_dist_per, args.merge_dist_per, args.threads, args.binning_file, argsStr)
             
         self.timeKeeper.printTimeStamp() 
         
@@ -113,12 +116,93 @@ class MetaDBSCAN(object):
         
         self.logger.info('  Extracting scaffolds assigned to bins.')
         extractScaffolds = ExtractScaffolds()
-        extractScaffolds.run(args.scaffold_file, args.binning_file, args.bin_dir)
+        extractScaffolds.run(args.preprocess_dir, args.scaffold_file, args.binning_file, args.bin_dir)
         
         self.logger.info('')
         self.logger.info('  Bins written to: ' + args.bin_dir)
         
-        self.timeKeeper.printTimeStamp() 
+        self.timeKeeper.printTimeStamp()
+        
+    def compare(self, args):
+        self.logger.info('')
+        self.logger.info('*******************************************************************************')
+        self.logger.info(' [MetaDBSCAN - compare] Assess if a scaffold might belong in a bin.')
+        self.logger.info('*******************************************************************************')
+        
+        compare = Compare()
+        compare.run(args.preprocess_dir, args.binning_file, args.bin_id, args.scaffold_id, args.gc_dist_per, args.td_dist_per, args.cov_dist_per)
+        
+        self.timeKeeper.printTimeStamp()     
+        
+    def merge_stats(self, args):
+        self.logger.info('')
+        self.logger.info('*******************************************************************************')
+        self.logger.info(' [MetaDBSCAN - merge_stats] Calculate merging statistics.')
+        self.logger.info('*******************************************************************************')
+        
+        merge = Merge()
+        merge.run(args.preprocess_dir, args.binning_file, args.gc_dist_per, args.td_dist_per, args.cov_dist_per, args.output_file)
+        
+        self.timeKeeper.printTimeStamp()    
+        
+    def unbinned(self, args):
+        self.logger.info('')
+        self.logger.info('*******************************************************************************')
+        self.logger.info(' [MetaDBSCAN - unbinned] Calculate statistics for unbinned scaffolds.')
+        self.logger.info('*******************************************************************************')
+        
+        unbinned = Unbinned()
+        unbinned.run(args.preprocess_dir, args.binning_file, args.gc_dist_per, args.td_dist_per, args.cov_dist_per, args.min_scaffold_len, args.min_contig_len, args.output_file)
+        
+        self.timeKeeper.printTimeStamp()    
+        
+    def merge(self, args):
+        self.logger.info('')
+        self.logger.info('*******************************************************************************')
+        self.logger.info(' [MetaDBSCAN - merge] Merge two bins.')
+        self.logger.info('*******************************************************************************')
+        
+        # read bins file
+        header = None
+        rows = []
+        for line in open(args.binning_file):
+            if line[0] == '#':
+                continue
+            
+            if not header:
+                header = line
+                continue
+            
+            rows.append(line)
+            
+        # write out modified binning file
+        fout = open(args.output_file, 'w')
+        fout.write(header)
+        for row in rows:
+            rowSplit = row.split('\t')
+            
+            if rowSplit[1] == 'unbinned':
+                fout.write(row)
+            else:   
+                binId = int(rowSplit[1])
+                if binId == args.bin1_id or binId == args.bin2_id:
+                    rowSplit[1] = str(args.merge_id)
+                    
+                fout.write('\t'.join(rowSplit))
+        fout.close()
+        
+        self.timeKeeper.printTimeStamp()    
+        
+    def expand(self, args):
+        self.logger.info('')
+        self.logger.info('*******************************************************************************')
+        self.logger.info(' [MetaDBSCAN - merge] Merge two bins.')
+        self.logger.info('*******************************************************************************')
+        
+        expand = Expand()
+        expand.run(args.unbinned_stats_file, args.binning_file, args.score_threshold, args.output_file)
+        
+        self.timeKeeper.printTimeStamp()    
         
     def tetraPcaPlot(self, args):
         self.logger.info('')
@@ -156,12 +240,12 @@ class MetaDBSCAN(object):
         if args.individual:
             self.logger.info('')
             self.logger.info('  Creating PCA plot of tetranucleotide signatures for individual bins.')
-            seqStatsForClusters = readSeqStatsForClusters(args.binning_file)
-            for clusterId in sorted(seqStatsForClusters.keys()):
-                if clusterId != DBSCAN.NOISE:
-                    plot.plot(args.binning_file, seqIds, pc, variance, args.min_seq_len, args.min_core_len, not args.no_bounding_box, not args.no_labels, clusterId)
+            seqStatsForBins = readSeqStatsForBins(args.binning_file)
+            for binId in sorted(seqStatsForBins.keys()):
+                if binId != Greedy.UNBINNED:
+                    plot.plot(args.binning_file, seqIds, pc, variance, args.min_seq_len, args.min_core_len, not args.no_bounding_box, not args.no_labels, binId)
                     
-                    outputFile = os.path.join(args.plot_folder, 'tetra_pca_plot.bin' + str(clusterId) + '.' + args.image_type)
+                    outputFile = os.path.join(args.plot_folder, 'tetra_pca_plot.bin' + str(binId) + '.' + args.image_type)
                     plot.savePlot(outputFile, dpi=args.dpi)
                     self.logger.info('    Plot written to: ' + outputFile)
             
@@ -175,10 +259,26 @@ class MetaDBSCAN(object):
              
         if not os.path.exists(args.plot_folder):
             os.makedirs(args.plot_folder)
+            
+        legendItems = {}
+        clusterIdToColour = {}
+        clusterIdToShape = {}
+        if args.legend:
+            for line in open(args.legend):
+                lineSplit = line.split('\t')
+                legendItems[int(lineSplit[0])] = lineSplit[1].strip()
+                if len(lineSplit) == 4:
+                    color = []
+                    for c in lineSplit[2].split(','):
+                        color.append(float(c)/255)
+                    clusterIdToColour[int(lineSplit[0])] = color
+                    
+                    shape = lineSplit[3].strip()
+                    clusterIdToShape[int(lineSplit[0])] = shape
         
         self.logger.info('  Creating GC vs coverage plot.')
         plot = GcCoveragePlot(args)      
-        plot.plot(args.binning_file, args.min_seq_len, args.min_core_len, args.coverage_linear, not args.hide_bounding_boxes, not args.hide_labels)
+        plot.plot(args.binning_file, args.min_seq_len, args.min_core_len, args.coverage_linear, not args.hide_bounding_boxes, not args.hide_labels, legendItems, None, clusterIdToColour, clusterIdToShape)
         
         outputFile = os.path.join(args.plot_folder, 'gc_cov_plot.' + args.image_type)
         plot.savePlot(outputFile, dpi=args.dpi)
@@ -191,30 +291,14 @@ class MetaDBSCAN(object):
         if args.individual:
             self.logger.info('')
             self.logger.info('  Creating GC vs coverage plot for individual bins.')
-            seqStatsForClusters = readSeqStatsForClusters(args.binning_file)
-            for clusterId in sorted(seqStatsForClusters.keys()):
-                if clusterId != DBSCAN.NOISE:
-                    plot.plot(args.binning_file, args.min_seq_len, args.min_core_len, args.coverage_linear, not args.hide_bounding_boxes, not args.hide_labels, clusterId)
+            seqStatsForBins = readSeqStatsForBins(args.binning_file)
+            for binId in sorted(seqStatsForBins.keys()):
+                if binId != Greedy.UNBINNED:
+                    plot.plot(args.binning_file, args.min_seq_len, args.min_core_len, args.coverage_linear, not args.hide_bounding_boxes, not args.hide_labels, None, binId)
                     
-                    outputFile = os.path.join(args.plot_folder, 'gc_cov_plot.bin' + str(clusterId) + '.' + args.image_type)
+                    outputFile = os.path.join(args.plot_folder, 'gc_cov_plot.bin' + str(binId) + '.' + args.image_type)
                     plot.savePlot(outputFile, dpi=args.dpi)
                     self.logger.info('    Plot written to: ' + outputFile)
-            
-        self.timeKeeper.printTimeStamp()
-        
-    def splitScaffolds(self, args):
-        self.logger.info('')
-        self.logger.info('*******************************************************************************')
-        self.logger.info(' [MetaDBSCAN - split_scaf] Split scaffolds into contigs.')
-        self.logger.info('*******************************************************************************')
-            
-        checkFileExists(args.scaffold_file)
-        
-        splitScaffolds = SplitScaffolds()
-        splitScaffolds.run(args.scaffold_file, args.min_n, args.output_file)
-
-        self.logger.info('')
-        self.logger.info('  Plot written to: ' + args.output_file)
             
         self.timeKeeper.printTimeStamp()
      
@@ -232,15 +316,23 @@ class MetaDBSCAN(object):
         # execute desired command
         if(args.subparser_name == 'preprocess'):
             self.preprocess(args)
-        elif(args.subparser_name == 'bin'):
-            self.bin(args)
+        elif(args.subparser_name == 'core'):
+            self.core(args)
         elif(args.subparser_name == 'refine'):
             self.refine(args)
         elif(args.subparser_name == 'extract'):
             self.extract(args)
+        elif(args.subparser_name == 'compare'):
+            self.compare(args)
+        elif(args.subparser_name == 'merge_stats'):
+            self.merge_stats(args)
+        elif(args.subparser_name == 'unbinned'):
+            self.unbinned(args)
+        elif(args.subparser_name == 'merge'):
+            self.merge(args)
+        elif(args.subparser_name == 'expand'):
+            self.expand(args)
         elif(args.subparser_name == 'tetra_pca'):
             self.tetraPcaPlot(args)
         elif(args.subparser_name == 'gc_cov'):
             self.gcCovPlot(args)
-        elif(args.subparser_name == 'split_scaf'):
-            self.splitScaffolds(args)

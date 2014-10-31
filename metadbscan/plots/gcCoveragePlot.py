@@ -18,8 +18,9 @@
 from AbstractPlot import AbstractPlot
 
 import random
+import operator
 
-from metadbscan.dbscan import DBSCAN, readSeqStatsForClusters
+from metadbscan.greedy import Greedy, readSeqStatsForBins
 
 from matplotlib.colors import rgb2hex
 
@@ -29,9 +30,9 @@ class GcCoveragePlot(AbstractPlot):
     def __init__(self, options):
         AbstractPlot.__init__(self, options)
 
-    def plot(self, binningFile, minSeqLen, minCoreLen, bCoverageLinear, bBoundingBoxes, bLabels, highlightedClusterId = None, clusterIdToColour = None):
+    def plot(self, binningFile, minSeqLen, minCoreLen, bCoverageLinear, bBoundingBoxes, bLabels, legendItems = None, highlightedClusterId = None, clusterIdToColour = None, clusterIdToShape = None):
         # read GC and coverage for sequences
-        seqStatsForClusters = readSeqStatsForClusters(binningFile)
+        seqStatsForClusters = readSeqStatsForBins(binningFile)
         
         # GC vs coverage plot
         self.fig.clear()
@@ -39,15 +40,19 @@ class GcCoveragePlot(AbstractPlot):
         
         axes = self.fig.add_subplot(111)
         
-        self.plotOnAxes(axes, seqStatsForClusters, minSeqLen, minCoreLen, bCoverageLinear, bBoundingBoxes, bLabels, highlightedClusterId, clusterIdToColour)
+        self.plotOnAxes(axes, seqStatsForClusters, minSeqLen, minCoreLen, bCoverageLinear, bBoundingBoxes, bLabels, legendItems, highlightedClusterId, clusterIdToColour, clusterIdToShape)
         
-        self.fig.tight_layout(pad=5)
+        self.fig.tight_layout(pad=0)
         
-    def plotOnAxes(self, axes, seqStatsForClusters, minSeqLen, minCoreLen, bCoverageLinear, bBoundingBoxes, bLabels, highlightedClusterId, clusterIdToColour):
+    def plotOnAxes(self, axes, seqStatsForClusters, minSeqLen, minCoreLen, bCoverageLinear, bBoundingBoxes, bLabels, legendItems, highlightedClusterId, clusterIdToColour, clusterIdToShape):
         # plot each bin
         highlightedBinSize = 0
         highlightedBinGC = []
         highlightedBinCoverage = []
+        
+        legendPlotItems = []
+        legendLabels = []
+
         for clusterId in sorted(seqStatsForClusters.keys()):
             gcDR = []
             covDR = []
@@ -56,6 +61,11 @@ class GcCoveragePlot(AbstractPlot):
             covCore = []
             for seqStat in seqStatsForClusters[clusterId]:
                 _, seqLen, GC, coverage = seqStat
+                GC = GC * 100.0
+                
+                if seqLen < minSeqLen:
+                    continue
+                
                 if seqLen > minCoreLen:
                     gcCore.append(GC)
                     covCore.append(coverage)
@@ -63,61 +73,72 @@ class GcCoveragePlot(AbstractPlot):
                     gcDR.append(GC)
                     covDR.append(coverage)
                     
-                if highlightedClusterId == clusterId:
-                    highlightedBinSize += seqLen    
-                    highlightedBinGC.append(GC)
-                    highlightedBinCoverage.append(coverage)
-                
-            if highlightedClusterId == None:
-                if clusterId != DBSCAN.NOISE:
-                    if clusterIdToColour != None:
-                        color = clusterIdToColour[clusterId]
+                if highlightedClusterId == None:
+                    if clusterId != Greedy.UNBINNED and (not legendItems or clusterId in legendItems):
+                        if clusterIdToColour:
+                            color = clusterIdToColour[clusterId]
+                        else:
+                            color = (random.uniform(0.3, 1.0), random.uniform(0.3, 1.0), random.uniform(0.3, 1.0))
+                        alpha = 0.8
+                        zorder = 3
                     else:
-                        color = (random.uniform(0.3, 1.0), random.uniform(0.3, 1.0), random.uniform(0.3, 1.0))
-                    alpha = 0.7
-                    zorder = 3
+                        color = (0.7, 0.7, 0.7)
+                        alpha = 0.5
+                        zorder = 1
                 else:
-                    color = (0.7, 0.7, 0.7)
-                    alpha = 0.5
-                    zorder = 1
-            else:
-                if clusterId == highlightedClusterId:
-                    color = (1.0, 0.0, 0.0)
-                    alpha = 1
-                    zorder = 3  
-                else:
-                    color = (0.7, 0.7, 0.7)
-                    alpha = 1
-                    zorder = 1
+                    if clusterId == highlightedClusterId:
+                        color = (1.0, 0.0, 0.0)
+                        alpha = 1
+                        zorder = 3  
+                        
+                        highlightedBinSize += seqLen
+                        highlightedBinGC.append(GC)
+                        highlightedBinCoverage.append(coverage)
+                    else:
+                        color = (0.7, 0.7, 0.7)
+                        alpha = 1
+                        zorder = 1
+
                 
             colorStr = rgb2hex(color)
-            if gcDR:
-                axes.scatter(gcDR, covDR, marker='o', s=10, lw=0.5, c=colorStr, alpha=alpha, zorder=zorder)
-
-            if gcCore:
-                axes.scatter(gcCore, covCore, marker='s', s=10, lw=0.5, c=colorStr, alpha=alpha, zorder=zorder+1)
+            if clusterIdToShape:
+                marker = clusterIdToShape.get(clusterId, 'o')
+                t = axes.scatter(gcCore, covCore, marker=marker, s=10, lw=0.5, c=colorStr, alpha=alpha, zorder=zorder+1)
+            else:
+                if gcDR:
+                    t = axes.scatter(gcDR, covDR, marker='s', s=10, lw=0.5, c=colorStr, alpha=alpha, zorder=zorder)
+                if gcCore:
+                    t = axes.scatter(gcCore, covCore, marker='o', s=10, lw=0.5, c=colorStr, alpha=alpha, zorder=zorder+1)
+                
+            if legendItems and clusterId in legendItems:
+                legendPlotItems.append(t)
+                legendLabels.append(legendItems[clusterId])
                 
             # plot bounding rect  
             if highlightedClusterId == None or clusterId == highlightedClusterId:
                 gc = gcDR + gcCore
                 cov = covDR + covCore
-                if len(gc) > 1 and clusterId != DBSCAN.NOISE:
+                if len(gc) > 1 and clusterId != Greedy.UNBINNED:
                     self.boundingBox(zip(gc, cov), axes, str(clusterId), bBoundingBoxes, bLabels)
+                    
+        # legend
+        if legendItems:
+            legend = axes.legend( legendPlotItems, legendLabels, scatterpoints=1, ncol=2, markerscale=2)
+            legend.draw_frame(False)
                 
         # setup axes 
-        axes.set_xlabel('GC')
-        axes.set_ylabel('Coverage')
+        axes.set_xlabel('GC (%)')
+        axes.set_ylabel('Scaffold coverage')
         
         if not bCoverageLinear:
             axes.set_yscale('log')
-            axes.set_ylabel('log(coverage)')
             
         if highlightedClusterId != None:
             axes.set_title('Bin %d, # sequences = %d, size = %.2fMbps\nGC = %.1f +/- %.2f, Coverage = %.1f +/- %.2f' % 
                             (highlightedClusterId, 
                              len(seqStatsForClusters[highlightedClusterId]),
                              float(highlightedBinSize)/1e6,
-                             np.mean(highlightedBinGC)*100.0, np.std(highlightedBinGC)*100.0,
+                             np.mean(highlightedBinGC), np.std(highlightedBinGC),
                              np.mean(highlightedBinCoverage), np.std(highlightedBinCoverage)))
         
         # Prettify plot

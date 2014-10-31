@@ -23,12 +23,40 @@ from seqUtils import readFasta
 class SplitScaffolds(object):
     def __init__(self):
         self.logger = logging.getLogger()
+        
+    def splits(self, scaffoldId, scaffold, minN):
+        contigs = {}
+        
+        contigCount = 0
+        nCount = 0
+        startIndex = 0
+        for curIndex, ch in enumerate(scaffold):
+            if ch == 'N' or ch == 'n':
+                if nCount == 0:
+                    nStart = curIndex
+                nCount += 1
+            else:
+                if nCount > minN:
+                    contigs[scaffoldId + '_c' + str(contigCount)] = [startIndex, nStart]
+                    
+                    contigCount += 1
+                    startIndex = curIndex
 
-    def run(self, seqFile, minN, outputFile):
+                nCount = 0
+
+        if startIndex != len(scaffold)-1:
+            if nCount == 0:
+                contigs[scaffoldId + '_c' + str(contigCount)] = [startIndex, len(scaffold)]
+            else:
+                contigs[scaffoldId + '_c' + str(contigCount)] = [startIndex, nStart]
+                
+        return contigs
+
+    def splitFile(self, seqFile, minN, outputFile):
         # read scaffolds
         self.logger.info('  Reading scaffolds.')
-        seqs = readFasta(seqFile)
-        self.logger.info('    Read %d scaffolds.' % len(seqs))
+        scaffolds = readFasta(seqFile)
+        self.logger.info('    Read %d scaffolds.' % len(scaffolds))
 
         # extract contigs from scaffolds
         self.logger.info('  Extracting contigs.')
@@ -36,41 +64,16 @@ class SplitScaffolds(object):
         fout = open(outputFile, 'w')
         processedSeqs = 0
         numContigs = 0
-        for seqId, seq in seqs.iteritems():
-            contigCount = 0
-            nCount = 0
-            startIndex = 0
-            for curIndex, ch in enumerate(seq):
-                if ch == 'N':
-                    if nCount == 0:
-                        nStart = curIndex
-                    nCount += 1
-                else:
-                    if nCount > minN:
-                        contig = seq[startIndex:nStart]
-                        
-                        fout.write('>' + seqId + '_c' + str(contigCount) + '\n')
-                        fout.write(contig + '\n')
-                        
-                        contigCount += 1
-                        numContigs += 1
-                        startIndex = curIndex
-
-                    nCount = 0
-
-            if startIndex != len(seq)-1:
-                fout.write('>' + seqId + '_c' + str(contigCount) + '\n')
-                if nCount == 0:
-                    contig = seq[startIndex:]
-                else:
-                    contig = seq[startIndex:nStart]
-
-                fout.write(contig + '\n')
+        for scaffoldId, scaffold in scaffolds.iteritems():
+            contigs = self.splits(scaffoldId, scaffold, minN)
+            for contigId, split in contigs.iteritems():
+                fout.write('>' + contigId + '\n')
+                fout.write(scaffolds[split[0]:split[1]])
                 numContigs += 1
 
             if self.logger.getEffectiveLevel() <= logging.INFO:
                 processedSeqs += 1
-                statusStr = '     Finished processing %d of %d (%.2f%%) scaffolds.' % (processedSeqs, len(seqs), float(processedSeqs)*100/len(seqs))
+                statusStr = '     Finished processing %d of %d (%.2f%%) scaffolds.' % (processedSeqs, len(scaffolds), float(processedSeqs)*100/len(scaffolds))
                 sys.stdout.write('%s\r' % statusStr)
                 sys.stdout.flush()
 

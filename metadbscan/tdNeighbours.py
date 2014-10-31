@@ -21,33 +21,33 @@ import sys
 import logging
 import multiprocessing as mp
 
-from distributions import findNearest
+from distributions import Distributions
 
 import numpy as np
 
 class TdNeighbours(object):
-    def __init__(self):
+    def __init__(self, fixedSeqLen):
         self.logger = logging.getLogger()
+        self.fixedSeqLen = fixedSeqLen 
     
-    def __workerThread(self, seqs, tetra, tdDist, tdDistPer, queueIn, queueOut):
+    def __workerThread(self, seqs, distributions, queueIn, queueOut):
         """Process each data item in parallel."""
-        
-        distKey = findNearest(tdDist[tdDist.keys()[0]].keys(), tdDistPer)
-  
+
         while True:
             index, seqI = queueIn.get(block=True, timeout=None)
             if index == None:
                 break
 
-            curTetraSig = tetra[seqI.seqId]
-            
             row = np.zeros(len(seqs))
-            for j, seqJ in enumerate(seqs):  
-                tetraSig = tetra[seqJ.seqId]        
-                dist = np.sum(np.abs(curTetraSig - tetraSig))
+            for j, seqJ in enumerate(seqs):    
+                dist = np.sum(np.abs(seqI.tetraSig - seqJ.tetraSig))
                 
-                minLen = min(seqI.seqLen, seqJ.seqLen)
-                if dist < tdDist[findNearest(tdDist.keys(), minLen)][distKey]:
+                if seqI.length > seqJ.length:
+                    bWithin = distributions.witinDistTD(dist, seqJ, self.fixedSeqLen)
+                else:
+                    bWithin = distributions.witinDistTD(dist, seqI, self.fixedSeqLen)
+                
+                if bWithin:
                     row[j] = 1
   
             # allow results to be processed or written to file
@@ -63,7 +63,7 @@ class TdNeighbours(object):
             
             if self.logger.getEffectiveLevel() <= logging.INFO:
                 processedItems += 1
-                statusStr = '    Finished processing %d of %d (%.2f%%) sequences.' % (processedItems, numDataItems, float(processedItems)*100/numDataItems)
+                statusStr = '      Finished processing %d of %d (%.2f%%) contigs.' % (processedItems, numDataItems, float(processedItems)*100/numDataItems)
                 sys.stdout.write('%s\r' % statusStr)
                 sys.stdout.flush()
                 
@@ -72,18 +72,7 @@ class TdNeighbours(object):
         if self.logger.getEffectiveLevel() <= logging.INFO:
             sys.stdout.write('\n')
     
-    def run(self, seqIdsOfInterest, seqs, tetraFile, tdDist, tdDistPer, threads):  
-        # read in tetranucleotide signatures for each sequence
-        self.logger.info('    Reading tetranucleotide signatures.')
-        tetra = {}
-        with open(tetraFile) as f:
-            f.readline()
-            for line in f:
-                lineSplit = line.split('\t')
-                seqId = lineSplit[0]
-                if seqId in seqIdsOfInterest:
-                    tetra[seqId] = np.array([float(x) for x in lineSplit[1:]])
-                
+    def run(self, seqs, tdDist, tdDistPer, threads):  
         # populate worker queue with data to process
         workerQueue = mp.Queue()
         writerQueue = mp.Queue()
@@ -96,7 +85,8 @@ class TdNeighbours(object):
             
         tdNeighbours = mp.Manager().list([None]*len(seqs))
         
-        workerProc = [mp.Process(target = self.__workerThread, args = (seqs, tetra, tdDist, tdDistPer, workerQueue, writerQueue)) for _ in range(threads)]
+        distributions = Distributions(None, None, tdDist, tdDistPer, None, None)
+        workerProc = [mp.Process(target = self.__workerThread, args = (seqs, distributions, workerQueue, writerQueue)) for _ in range(threads)]
         writeProc = mp.Process(target = self.__writerThread, args = (tdNeighbours, len(seqs), writerQueue))
         
         writeProc.start()

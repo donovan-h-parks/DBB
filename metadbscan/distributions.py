@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 ###############################################################################
 #                                                                             #
 #    This program is free software: you can redistribute it and/or modify     #
@@ -17,30 +15,125 @@
 #                                                                             #
 ###############################################################################
 
-__prog_desc__ = 'functions for working with GC and TD distributions'
-
-__author__ = 'Donovan Parks'
-__copyright__ = 'Copyright 2013'
-__credits__ = ['Donovan Parks']
-__license__ = 'GPL3'
-__version__ = '0.1'
-__maintainer__ = 'Donovan Parks'
-__email__ = 'donovan.parks@gmail.com'
-__status__ = 'Development'
-
 import os
+import sys
 import ast
-
+import logging
 import numpy as np
 
-def findNearest(array, value):
-    '''Find nearest array element to a given value.'''
-    idx = (np.abs(np.array(array)-value)).argmin()
-    return array[idx]
+from common import checkFileExists
 
-def inRange(testValue, lowerBound, upperBound):
-    '''Determine is test value falls in a given range.'''
-    if testValue >= lowerBound and testValue <= upperBound:
-        return True
+def readDistributions(preprocessDir, gcDistPer, tdDistPer, covDistPer):
+    gcDistFile = os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), '..', 'data', 'gc_dist.txt')
+    checkFileExists(gcDistFile)
     
-    return False
+    tdDistFile = os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), '..', 'data', 'td_dist.txt')
+    checkFileExists(tdDistFile)
+    
+    coverageDistFile = os.path.join(preprocessDir, 'coverage_dist.txt')
+    checkFileExists(coverageDistFile)
+    
+    with open(gcDistFile, 'r') as f:
+        s = f.read()
+        gcDist = ast.literal_eval(s)
+        
+    with open(tdDistFile, 'r') as f:
+        s = f.read()
+        tdDist = ast.literal_eval(s)
+    
+    with open(coverageDistFile) as f:
+        s = f.read()
+        covDist = ast.literal_eval(s)
+        
+    return gcDist, tdDist, covDist
+
+class Distributions(object):
+    def __init__(self, gcDist, gcDistPer, tdDist, tdDistPer, covDist, covDistPer):
+        self.logger = logging.getLogger()
+        
+        # determine distribution index values for each distribution
+        # (this is a little messy due to floating point keys)
+        if gcDist != None:
+            self.gcDist = gcDist
+            sampleMeanGC = gcDist.keys()[0]
+            sampleSeqLen = gcDist[sampleMeanGC].keys()[0]
+            d = gcDist[sampleMeanGC][sampleSeqLen]
+            self.gcLowerBoundKey = self.__findNearest(d.keys(), (100 - gcDistPer)/2.0)
+            self.gcUpperBoundKey = self.__findNearest(d.keys(), (100 + gcDistPer)/2.0)
+        
+        if tdDist != None:
+            self.tdDist = tdDist
+            self.tdKey = self.__findNearest(tdDist[tdDist.keys()[0]].keys(), tdDistPer)
+        
+        if covDist != None:
+            self.covDist = covDist
+            d = covDist[covDist.keys()[0]]
+            self.covLowerBoundKey = self.__findNearest(d.keys(), (100 - covDistPer)/2.0)
+            self.covUpperBoundKey = self.__findNearest(d.keys(), (100 + covDistPer)/2.0)
+            
+    def boundsDistGC(self, unbinnedContig, core, fixedSeqLen=None):
+        closestMeanGC = self.__findNearest(self.gcDist.keys(), core.GC)
+        
+        if fixedSeqLen is None:
+            closestSeqLen = self.__findNearest(self.gcDist[closestMeanGC].keys(), unbinnedContig.length)
+        else:
+            closestSeqLen = self.__findNearest(self.gcDist[closestMeanGC].keys(), fixedSeqLen)
+
+        d = self.gcDist[closestMeanGC][closestSeqLen]
+        lowerBound = d[self.gcLowerBoundKey]
+        upperBound = d[self.gcUpperBoundKey]
+
+        return lowerBound, upperBound
+        
+    def withinDistGC(self, unbinnedContig, core, fixedSeqLen=None):
+        lowerBound, upperBound = self.boundsDistGC(unbinnedContig, core, fixedSeqLen)
+        
+        gcDiff = unbinnedContig.GC - core.GC
+        return self.__inRange(gcDiff, lowerBound, upperBound)
+    
+    def boundDistTD(self, unbinnedContig, fixedSeqLen=None):
+        if fixedSeqLen is None:
+            closestSeqLen = self.__findNearest(self.tdDist.keys(), unbinnedContig.length)
+        else:
+            closestSeqLen = self.__findNearest(self.tdDist.keys(), fixedSeqLen)
+            
+        return self.tdDist[closestSeqLen][self.tdKey]
+        
+    def witinDistTD(self, tetraDist, unbinnedContig, fixedSeqLen=None):       
+        return tetraDist < self.boundDistTD(unbinnedContig, fixedSeqLen)
+    
+    def boundsDistCov(self, unbinnedContig, core, fixedSeqLen=None):
+        if fixedSeqLen is None:
+            closestSeqLen = self.__findNearest(self.covDist.keys(), unbinnedContig.length)
+        else:
+            closestSeqLen = self.__findNearest(self.covDist.keys(), fixedSeqLen)
+
+        d = self.covDist[closestSeqLen]
+        lowerBound = d[self.covLowerBoundKey]
+        upperBound = d[self.covUpperBoundKey]
+        
+        return lowerBound, upperBound
+        
+    def withinDistCov(self, unbinnedContig, core, fixedSeqLen=None):
+        lowerBound, upperBound = self.boundsDistCov(unbinnedContig, core, fixedSeqLen)
+        
+        covPerDiff = (unbinnedContig.coverage - core.coverage)*100.0 / core.coverage
+        return self.__inRange(covPerDiff, lowerBound, upperBound)
+                    
+    def gcDistance(self, unbinnedContig, core):
+        return abs(unbinnedContig.GC - core.GC)
+        
+    def covDistance(self, unbinnedContig, core):
+        return abs(unbinnedContig.coverage - core.coverage)
+    
+    def __findNearest(self, array, value):
+        '''Find nearest array element to a given value.'''
+        idx = (np.abs(np.array(array)-value)).argmin()
+        return array[idx]
+    
+    def __inRange(self, testValue, lowerBound, upperBound):
+        '''Determine is test value falls in a given range.'''
+        if testValue >= lowerBound and testValue <= upperBound:
+            return True
+        
+        return False

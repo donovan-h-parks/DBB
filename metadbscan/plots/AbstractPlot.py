@@ -43,6 +43,7 @@ class AbstractPlot(FigureCanvas):
 		mpl.rcParams['xtick.labelsize'] = self.options.font_size
 		mpl.rcParams['ytick.labelsize'] = self.options.font_size
 		mpl.rcParams['legend.fontsize'] = self.options.font_size
+		mpl.rcParams['svg.fonttype'] = 'none'
 
 		self.fig = Figure(facecolor='white', dpi=options.dpi)
 
@@ -171,5 +172,5 @@ class AbstractPlot(FigureCanvas):
 		if bLabels:
 			ax.annotate(label, xy = (min(data[:,0]), max(data[:,1])), xytext = (0, 0),
 							textcoords = 'offset points', ha = 'right', va = 'bottom',
-							bbox = dict(boxstyle = 'round,pad=0.5', fc = (0.5, 0.5, 0.5), alpha = 0.1))
+							bbox = dict(boxstyle = 'round,pad=0.5', fc = (0.5, 0.5, 0.5), alpha = 0.1), zorder=10)
 

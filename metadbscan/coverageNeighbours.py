@@ -21,21 +21,17 @@ import sys
 import logging
 import multiprocessing as mp
 
-from distributions import inRange, findNearest
+from distributions import Distributions
 
 import numpy as np
 
 class CoverageNeighbours(object):
-    def __init__(self):
+    def __init__(self, fixedSeqLen = None):
         self.logger = logging.getLogger()
+        self.fixedSeqLen = fixedSeqLen 
 
-    def __workerThread(self, seqs, covDist, covDistPer, queueIn, queueOut):
-        """Process each data item in parallel."""
-        
-        d = covDist[covDist.keys()[0]]
-        lowerBoundKey = findNearest(d.keys(), (100 - covDistPer)/2.0)
-        upperBoundKey = findNearest(d.keys(), (100 + covDistPer)/2.0)
-            
+    def __workerThread(self, seqs, distributions, queueIn, queueOut):
+        """Process each data item in parallel."""      
         while True:
             index, seqI = queueIn.get(block=True, timeout=None)
             if index == None:
@@ -43,22 +39,14 @@ class CoverageNeighbours(object):
 
             row = np.zeros(len(seqs))
             for j, seqJ in enumerate(seqs):
-                if seqI.seqLen > seqJ.seqLen:
-                    meanCov = seqI.coverage
-                    covPerDiff = (seqJ.coverage - meanCov)*100.0 / meanCov
-                    seqLen = seqJ.seqLen
+                if seqI.length > seqJ.length:
+                    core = seqI
+                    unbinned = seqJ
                 else:
-                    meanCov = seqJ.coverage
-                    covPerDiff = (seqI.coverage - meanCov)*100.0 / meanCov
-                    seqLen = seqI.seqLen
+                    core = seqJ
+                    unbinned = seqI
 
-                closestSeqLen = findNearest(covDist.keys(), seqLen)
-
-                d = covDist[closestSeqLen]
-                lowerBound = d[lowerBoundKey]
-                upperBound = d[upperBoundKey]
-
-                if inRange(covPerDiff, lowerBound, upperBound):
+                if distributions.withinDistCov(unbinned, core, self.fixedSeqLen):
                     row[j] = 1
                   
             # allow results to be processed or written to file
@@ -74,7 +62,7 @@ class CoverageNeighbours(object):
             
             if self.logger.getEffectiveLevel() <= logging.INFO:
                 processedItems += 1
-                statusStr = '    Finished processing %d of %d (%.2f%%) sequences.' % (processedItems, numDataItems, float(processedItems)*100/numDataItems)
+                statusStr = '      Finished processing %d of %d (%.2f%%) contigs.' % (processedItems, numDataItems, float(processedItems)*100/numDataItems)
                 sys.stdout.write('%s\r' % statusStr)
                 sys.stdout.flush()
                 
@@ -96,7 +84,8 @@ class CoverageNeighbours(object):
         
         covNeighbours = mp.Manager().list([None]*len(seqs))
 
-        workerProc = [mp.Process(target = self.__workerThread, args = (seqs, covDist, covDistPer, workerQueue, writerQueue)) for _ in range(threads)]
+        distributions = Distributions(None, None, None, None, covDist, covDistPer)
+        workerProc = [mp.Process(target = self.__workerThread, args = (seqs, distributions, workerQueue, writerQueue)) for _ in range(threads)]
         writeProc = mp.Process(target = self.__writerThread, args = (covNeighbours, len(seqs), writerQueue))
         
         writeProc.start()
