@@ -51,7 +51,7 @@ def printHelp():
     merge_stats -> Calculate statistics indicating if two bins are candidates for merging
     unbinned    -> Calculate statistics indicating if unbinned scaffolds should be binned
     
- Bin utilities:
+  Bin utilities:
     merge      -> Merge two bins
     expand     -> Expand bins to include additional unbinned scaffolds
 
