@@ -34,12 +34,13 @@ from defaultValues import DefaultValues
 from seqUtils import readFasta, baseCount
 from splitScaffolds import SplitScaffolds
 
+
 class ReadLoader:
     """Callback for counting aligned reads with pysam.fetch"""
-    def __init__(self, refLength, minAlignPer, maxEditDistPer):
+    def __init__(self, refLength, minAlignPer, maxEditDistPer, bAllowInproperPairs):
         self.minAlignPer = minAlignPer
         self.maxEditDistPer = maxEditDistPer
-        
+
         self.numReads = 0
         self.numMappedReads = 0
         self.numDuplicates = 0
@@ -48,6 +49,8 @@ class ReadLoader:
         self.numFailedAlignLen = 0
         self.numFailedEditDist = 0
         self.numFailedProperPair = 0
+
+        self.bAllowInproperPairs = bAllowInproperPairs
 
         self.coverage = np.zeros(refLength)
 
@@ -62,11 +65,11 @@ class ReadLoader:
             self.numSecondary += 1
         elif read.is_qcfail:
             self.numFailedQC += 1
-        elif read.alen < self.minAlignPer*read.rlen:
+        elif read.alen < self.minAlignPer * read.rlen:
             self.numFailedAlignLen += 1
-        elif read.opt('NM') > self.maxEditDistPer*read.rlen:
+        elif read.opt('NM') > self.maxEditDistPer * read.rlen:
             self.numFailedEditDist += 1
-        elif not read.is_proper_pair:
+        elif not self.bAllowInproperPairs and not read.is_proper_pair:
             self.numFailedProperPair += 1
         else:
             self.numMappedReads += 1
@@ -75,7 +78,8 @@ class ReadLoader:
             # read length (rlen) as this bring the calculated coverage
             # in line with 'samtools depth' (at least when the min
             # alignment length and edit distance thresholds are zero).
-            self.coverage[read.pos:read.pos+read.alen] += 1
+            self.coverage[read.pos:read.pos + read.alen] += 1
+
 
 class Preprocess(object):
     """ Preprocess contig data in order to calculate:
@@ -86,20 +90,20 @@ class Preprocess(object):
     """
     def __init__(self):
         self.logger = logging.getLogger()
-        
+
     def __calculateGC(self, seq):
         a, c, g, t = baseCount(seq)
 
         gc = g + c
         at = a + t
 
-        return float(gc) / (gc+at)
-    
-    def __workerThread(self, bamFile, scaffolds, genomicSig, minSeqLen, percent, minN, minAlignLen, maxEditDist, coverageType, queueIn, queueOut):
+        return float(gc) / (gc + at)
+
+    def __workerThread(self, bamFile, scaffolds, genomicSig, minSeqLen, percent, minN, minAlignLen, maxEditDist, bAllowInproperPairs, coverageType, queueIn, queueOut):
         """Process each data item in parallel."""
-        
+
         splitScaffolds = SplitScaffolds()
-        
+
         while True:
             scaffoldIds, scaffoldLens = queueIn.get(block=True, timeout=None)
             if scaffoldIds == None:
@@ -108,13 +112,13 @@ class Preprocess(object):
             bamfile = pysam.Samfile(bamFile, 'rb')
 
             for scaffoldId, scaffoldLen in zip(scaffoldIds, scaffoldLens):
-                readLoader = ReadLoader(scaffoldLen, minAlignLen, maxEditDist)
-                bamfile.fetch(scaffoldId, 0, scaffoldLen, callback = readLoader)
-                
+                readLoader = ReadLoader(scaffoldLen, minAlignLen, maxEditDist, bAllowInproperPairs)
+                bamfile.fetch(scaffoldId, 0, scaffoldLen, callback=readLoader)
+
                 # identify contigs in scaffold and calculate contig statistics
                 scaffoldSeq = scaffolds[scaffoldId]
                 contigs = splitScaffolds.splits(scaffoldId, scaffoldSeq, minN)
-                
+
                 # determine nucleotide mask for scaffold
                 ntMask = []
                 for contigId, split in contigs.iteritems():
@@ -128,15 +132,15 @@ class Preprocess(object):
                     sortedValues = sorted(readLoader.coverage[ntMask])
                     lowerIndex = int(0.1 * len(sortedValues)) + 1
                     upperIndex = len(sortedValues) - int(0.1 * len(sortedValues)) - 1
-                    scaffoldCoverage = np.mean(sortedValues[lowerIndex:upperIndex])                  
+                    scaffoldCoverage = np.mean(sortedValues[lowerIndex:upperIndex])
                 else:
                     # unknown coverage type
-                    self.logger.error('Unknown coverage type.') 
+                    self.logger.error('Unknown coverage type.')
                     sys.exit(-1)
-                            
+
                 scaffoldTetraSig = genomicSig.seqSignature(scaffoldSeq)
                 scaffoldSeqStats = [scaffoldLen, scaffoldGC, scaffoldCoverage, scaffoldTetraSig]
-                       
+
                 # calculate contig statistics
                 contigSeqStats = {}
                 if len(contigs) > 1:
@@ -147,69 +151,80 @@ class Preprocess(object):
                             contigCoverage = np.mean(readLoader.coverage[split[0]:split[1]])
                         else:
                             sortedValues = sorted(readLoader.coverage[split[0]:split[1]])
-                            lowerIndex = int(0.1* len(sortedValues)) + 1
+                            lowerIndex = int(0.1 * len(sortedValues)) + 1
                             upperIndex = len(sortedValues) - int(0.1 * len(sortedValues)) - 1
                             contigCoverage = np.mean(sortedValues[lowerIndex:upperIndex])
-                            
+
                         tetraSig = genomicSig.seqSignature(scaffoldSeq[split[0]:split[1]])
                         contigSeqStats[contigId] = [contigLen, contigGC, contigCoverage, tetraSig, split[0], split[1]]
                 else:
                     contigSeqStats[scaffoldId] = scaffoldSeqStats + [0, scaffoldSeq]
-                    
+
                 # calculate coverage distribution parameters
                 covDist = defaultdict(list)
                 testLen = minSeqLen
-                
-                for contigId, contigStats in contigSeqStats.iteritems():      
+
+                for contigId, contigStats in contigSeqStats.iteritems():
                     contigLen, contigGC, contigCoverage, tetraSig, start, _ = contigStats
-                    
-                    while contigLen >= 4*testLen:
-                        numTestPts = contigLen/testLen
-                        
+
+                    if contigCoverage == 0:
+                        continue
+
+                    while contigLen >= 4 * testLen:
+                        numTestPts = contigLen / testLen
+
                         perErrors = []
                         for i in xrange(0, numTestPts):
-                            testCoverage = np.mean(readLoader.coverage[testLen*i + start:testLen*(i+1) + start])
-                            perErrors.append( (testCoverage - contigCoverage)*100.0 / contigCoverage)
-                            
+                            if coverageType == 'mean':
+                                testCoverage = np.mean(readLoader.coverage[testLen * i + start:testLen * (i + 1) + start])
+                            else:
+                                sortedValues = sorted(readLoader.coverage[testLen * i + start:testLen * (i + 1) + start])
+                                lowerIndex = int(0.1 * len(sortedValues)) + 1
+                                upperIndex = len(sortedValues) - int(0.1 * len(sortedValues)) - 1
+                                testCoverage = np.mean(sortedValues[lowerIndex:upperIndex])
+
+                            testCoverage = np.mean(readLoader.coverage[testLen * i + start:testLen * (i + 1) + start])
+                            perErrors.append((testCoverage - contigCoverage) * 100.0 / contigCoverage)
+
                         # limit contribution of any sequences to the coverage distribution, and
-                        # ensure the number of test points over all sequences is kept to a reasonble number
+                        # ensure the number of test points over all sequences is kept to a reasonable number
                         if numTestPts > 1000:
                             covDist[testLen] = random.sample(perErrors, 1000)
                         else:
                             covDist[testLen] = perErrors
-                          
-                        testLen = int(testLen + testLen*percent)
+
+                        testLen = int(testLen + testLen * percent)
 
                 # report mapping statistics
-                readMappingStats = [readLoader.numReads, readLoader.numDuplicates, readLoader.numSecondary, 
-                                    readLoader.numFailedQC, readLoader.numFailedAlignLen, readLoader.numFailedEditDist, 
+                readMappingStats = [readLoader.numReads, readLoader.numDuplicates, readLoader.numSecondary,
+                                    readLoader.numFailedQC, readLoader.numFailedAlignLen, readLoader.numFailedEditDist,
                                     readLoader.numFailedProperPair, readLoader.numMappedReads]
-                
+
                 queueOut.put((scaffoldId, scaffoldSeqStats, contigSeqStats, readMappingStats, covDist))
 
             bamfile.close()
 
-    def __writerThread(self, genomicSig, scaffoldSeqStatsFile, scaffoldTetraSigFile, contigSeqStatsFile, contigTetraSigFile, covDistFile, numRefSeqs, writerQueue):
+    def __writerThread(self, genomicSig, scaffoldSeqStatsFile, scaffoldTetraSigFile, contigSeqStatsFile, contigTetraSigFile, covDistFile, numRefSeqs, bAllowInproperPairs, writerQueue):
         """Store or write results of worker threads in a single thread."""
-        
+
         scaffoldStatsOut = open(scaffoldSeqStatsFile, 'w')
         scaffoldStatsOut.write('Scaffold Id\tLength\tGC\tCoverage (mean depth)\tMapped reads\n')
-        
+
         scaffoldTetraSigOut = open(scaffoldTetraSigFile, 'w')
         scaffoldTetraSigOut.write('Scaffold Id')
         for kmer in genomicSig.canonicalKmerOrder():
             scaffoldTetraSigOut.write('\t' + kmer)
         scaffoldTetraSigOut.write('\n')
-        
+
         contigStatsOut = open(contigSeqStatsFile, 'w')
         contigStatsOut.write('Contig Id\tLength\tGC\tCoverage (mean depth)\n')
-        
+
         contigTetraSigOut = open(contigTetraSigFile, 'w')
         contigTetraSigOut.write('Contig Id')
         for kmer in genomicSig.canonicalKmerOrder():
             contigTetraSigOut.write('\t' + kmer)
         contigTetraSigOut.write('\n')
-        
+
         totalReads = 0
         totalDuplicates = 0
         totalSecondary = 0
@@ -222,20 +237,20 @@ class Preprocess(object):
         processedRefSeqs = 0
         processedContigs = 0
         contigSizeDist = defaultdict(int)
-        
+
         globalCovDist = defaultdict(list)
-        
+
         while True:
             scaffoldId, scaffoldSeqStats, contigSeqStats, readMappingStats, covDist = writerQueue.get(block=True, timeout=None)
             if scaffoldId == None:
                 break
-            
+
             for testLen, testPts in covDist.iteritems():
                 globalCovDist[testLen].extend(testPts)
 
             if self.logger.getEffectiveLevel() <= logging.INFO:
                 processedRefSeqs += 1
-                statusStr = '    Processed %d of %d (%.2f%%) scaffolds.' % (processedRefSeqs, numRefSeqs, float(processedRefSeqs)*100/numRefSeqs)
+                statusStr = '    Processed %d of %d (%.2f%%) scaffolds.' % (processedRefSeqs, numRefSeqs, float(processedRefSeqs) * 100 / numRefSeqs)
                 sys.stdout.write('%s\r' % statusStr)
                 sys.stdout.flush()
 
@@ -250,16 +265,16 @@ class Preprocess(object):
 
             scaffoldStatsOut.write(scaffoldId + '\t' + str(scaffoldSeqStats[0]) + '\t' + str(scaffoldSeqStats[1]))
             scaffoldStatsOut.write('\t' + str(scaffoldSeqStats[2]) + '\t' + str(readMappingStats[7]) + '\n')
-            
+
             scaffoldTetraSigOut.write(scaffoldId)
             scaffoldTetraSigOut.write('\t' + '\t'.join(map(str, scaffoldSeqStats[3])))
             scaffoldTetraSigOut.write('\n')
-            
+
             for contigId, contigStats in contigSeqStats.iteritems():
                 processedContigs += 1
                 contigStatsOut.write(contigId + '\t' + str(contigStats[0]))
                 contigStatsOut.write('\t' + str(contigStats[1]) + '\t' + str(contigStats[2]) + '\n')
-                
+
                 if contigStats[0] >= 10000:
                     contigSizeDist[10000] += 1
                 if contigStats[0] >= 5000:
@@ -268,7 +283,7 @@ class Preprocess(object):
                     contigSizeDist[2000] += 1
                 if contigStats[0] >= 1000:
                     contigSizeDist[1000] += 1
-                
+
                 contigTetraSigOut.write(contigId)
                 contigTetraSigOut.write('\t' + '\t'.join(map(str, contigStats[3])))
                 contigTetraSigOut.write('\n')
@@ -279,14 +294,16 @@ class Preprocess(object):
             print ''
             print '  Read mapping statistics:'
             print '    # total reads: %d' % totalReads
-            print '      # properly mapped reads: %d (%.1f%%)' % (totalMappedReads, float(totalMappedReads)*100/totalReads)
-            print '      # duplicate reads: %d (%.1f%%)' % (totalDuplicates, float(totalDuplicates)*100/totalReads)
-            print '      # secondary reads: %d (%.1f%%)' % (totalSecondary, float(totalSecondary)*100/totalReads)
-            print '      # reads failing QC: %d (%.1f%%)' % (totalFailedQC, float(totalFailedQC)*100/totalReads)
-            print '      # reads failing alignment length: %d (%.1f%%)' % (totalFailedAlignLen, float(totalFailedAlignLen)*100/totalReads)
-            print '      # reads failing edit distance: %d (%.1f%%)' % (totalFailedEditDist, float(totalFailedEditDist)*100/totalReads)
-            print '      # reads not properly paired: %d (%.1f%%)' % (totalFailedProperPair, float(totalFailedProperPair)*100/totalReads)
-            
+            print '      # properly mapped reads: %d (%.1f%%)' % (totalMappedReads, float(totalMappedReads) * 100 / totalReads)
+            print '      # duplicate reads: %d (%.1f%%)' % (totalDuplicates, float(totalDuplicates) * 100 / totalReads)
+            print '      # secondary reads: %d (%.1f%%)' % (totalSecondary, float(totalSecondary) * 100 / totalReads)
+            print '      # reads failing QC: %d (%.1f%%)' % (totalFailedQC, float(totalFailedQC) * 100 / totalReads)
+            print '      # reads failing alignment length: %d (%.1f%%)' % (totalFailedAlignLen, float(totalFailedAlignLen) * 100 / totalReads)
+            print '      # reads failing edit distance: %d (%.1f%%)' % (totalFailedEditDist, float(totalFailedEditDist) * 100 / totalReads)
+
+            if not bAllowInproperPairs:
+                print '      # reads not properly paired: %d (%.1f%%)' % (totalFailedProperPair, float(totalFailedProperPair) * 100 / totalReads)
+
             print ''
             print '  Total contigs within scaffolds: %d' % processedContigs
             for contigLen in sorted(contigSizeDist.keys()):
@@ -296,7 +313,7 @@ class Preprocess(object):
         scaffoldTetraSigOut.close()
         contigStatsOut.close()
         contigTetraSigOut.close()
-        
+
         self.__calculateCoverageDistribution(globalCovDist, covDistFile)
 
     def __calculateCoverageDistribution(self, covDist, covDistFile):
@@ -309,22 +326,22 @@ class Preprocess(object):
             testPts = covDist[testLen]
             if len(testPts) > 100:
                 t[testLen] = {}
-                
-                qTest = np.arange(0, 100+0.5, 0.5).tolist()
+
+                qTest = np.arange(0, 100 + 0.5, 0.5).tolist()
                 percentiles = np.percentile(testPts, qTest)
                 for q, p in zip(qTest, percentiles):
                     t[testLen][q] = p
-                    
+
         covDistOut = open(covDistFile, 'w')
-        covDistOut.write(str(t))  
+        covDistOut.write(str(t))
         covDistOut.close()
-        
+
         self.logger.info('    Min. distribution length: %d, max. distribution length: %d' % (min(t.keys()), max(t.keys())))
-        
-    def run(self, scaffoldFile, bamFile, minSeqLen, percent, minN, minAlignLen, maxEditDist, coverageType, numThreads, outputDir, argsStr):
+
+    def run(self, scaffoldFile, bamFile, minSeqLen, percent, minN, minAlignLen, maxEditDist, bAllowInproperPairs, coverageType, numThreads, outputDir, argsStr):
         checkFileExists(scaffoldFile)
         checkFileExists(bamFile)
-        
+
         # read scaffolds
         self.logger.info('  Reading scaffolds.')
         scaffolds = readFasta(scaffoldFile)
@@ -333,31 +350,31 @@ class Preprocess(object):
         # process reference sequences in parallel
         self.logger.info('')
         self.logger.info('  Reading BAM file.')
-        
+
         workerQueue = mp.Queue()
         writerQueue = mp.Queue()
 
         bamfile = pysam.Samfile(bamFile, 'rb')
         refSeqIds = bamfile.references
         refSeqLens = bamfile.lengths
-        
+
         filteredRefSeqs = []
         for refSeqId, refLen in zip(refSeqIds, refSeqLens):
             if refLen >= minSeqLen:
                 filteredRefSeqs.append([refSeqId, refLen])
-                
+
         self.logger.info('    Reference scaffolds >= %d bps: %d' % (minSeqLen, len(filteredRefSeqs)))
 
         # populate each thread with reference sequence to process
         # Note: to distribute the work load in a reasonably even manner
-        # reference sequences are added in descending order of size and 
+        # reference sequences are added in descending order of size and
         # to the reference list with the fewest total base pairs
         refSeqLists = [[] for _ in range(numThreads)]
         refLenLists = [[] for _ in range(numThreads)]
 
-        filteredRefSeqs.sort(key=itemgetter(1), reverse=True)   # sort in descending order of size
-        
-        totalRefSeqBP = [0]*len(refSeqLists)
+        filteredRefSeqs.sort(key=itemgetter(1), reverse=True)  # sort in descending order of size
+
+        totalRefSeqBP = [0] * len(refSeqLists)
         for refSeqId, refLen in filteredRefSeqs:
             threadIndex = np.argsort(totalRefSeqBP)[0]
             refSeqLists[threadIndex].append(refSeqId)
@@ -375,39 +392,39 @@ class Preprocess(object):
         try:
             self.logger.info('')
             self.logger.info('  Processing reference scaffolds.')
-            workerProc = [mp.Process(target = self.__workerThread, args = (bamFile, scaffolds, gs, minSeqLen, percent, minN, minAlignLen, maxEditDist, coverageType, workerQueue, writerQueue)) for _ in range(numThreads)]
-            
-            scaffoldSeqStatFile = os.path.join(outputDir, 'scaffolds.seq_stats.tsv')  
-            scaffoldTetraSigFile = os.path.join(outputDir, 'scaffolds.tetra.tsv')    
+            workerProc = [mp.Process(target=self.__workerThread, args=(bamFile, scaffolds, gs, minSeqLen, percent, minN, minAlignLen, maxEditDist, bAllowInproperPairs, coverageType, workerQueue, writerQueue)) for _ in range(numThreads)]
+
+            scaffoldSeqStatFile = os.path.join(outputDir, 'scaffolds.seq_stats.tsv')
+            scaffoldTetraSigFile = os.path.join(outputDir, 'scaffolds.tetra.tsv')
             contigSeqStatFile = os.path.join(outputDir, 'contigs.seq_stats.tsv')
-            contigTetraSigFile = os.path.join(outputDir, 'contigs.tetra.tsv') 
+            contigTetraSigFile = os.path.join(outputDir, 'contigs.tetra.tsv')
             covDistFile = os.path.join(outputDir, 'coverage_dist.txt')
-            
-            writeProc = mp.Process(target = self.__writerThread, args = (gs, scaffoldSeqStatFile, scaffoldTetraSigFile, contigSeqStatFile, contigTetraSigFile, covDistFile, len(filteredRefSeqs), writerQueue))
-    
+
+            writeProc = mp.Process(target=self.__writerThread, args=(gs, scaffoldSeqStatFile, scaffoldTetraSigFile, contigSeqStatFile, contigTetraSigFile, covDistFile, len(filteredRefSeqs), bAllowInproperPairs, writerQueue))
+
             writeProc.start()
-    
+
             for p in workerProc:
                 p.start()
-    
+
             for p in workerProc:
                 p.join()
-    
+
             writerQueue.put((None, None, None, None, None))
             writeProc.join()
         except:
             # make sure all processes are terminated
             for p in workerProc:
                 p.terminate()
-                
+
             writeProc.terminate()
-        
+
         # write command line arguments to file
         parameterFile = os.path.join(outputDir, 'parameters.txt')
         fout = open(parameterFile, 'w')
         fout.write(argsStr)
         fout.close()
-        
+
         # report calculate parameters and statistics
         self.logger.info('')
         self.logger.info('  Scaffold statistics written to: ' + scaffoldSeqStatFile)
@@ -416,4 +433,3 @@ class Preprocess(object):
         self.logger.info('  Tetranucleotide signatures for contigs written to: ' + contigTetraSigFile)
         self.logger.info('  Coverage distribution parameters written to: ' + covDistFile)
         self.logger.info('  Preprocessing parameters written to: ' + parameterFile)
-        

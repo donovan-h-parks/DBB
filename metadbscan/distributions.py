@@ -117,7 +117,12 @@ class Distributions(object):
     def withinDistCov(self, unbinnedContig, core, fixedSeqLen=None):
         lowerBound, upperBound = self.boundsDistCov(unbinnedContig, core, fixedSeqLen)
         
-        covPerDiff = (unbinnedContig.coverage - core.coverage)*100.0 / core.coverage
+        if core.coverage > 0:          
+            covPerDiff = (unbinnedContig.coverage - core.coverage)*100.0 / core.coverage
+        else:
+            # assume a coverage of 0.1
+            covPerDiff = (unbinnedContig.coverage - 0.1)*100.0 / 0.1
+            
         return self.__inRange(covPerDiff, lowerBound, upperBound)
                     
     def gcDistance(self, unbinnedContig, core):

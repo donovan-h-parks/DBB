@@ -2,7 +2,7 @@ from distutils.core import setup
 
 setup(
     name='MetaDBSCAN',
-    version='0.0.2',
+    version='0.0.4',
     author='Donovan Parks',
     author_email='donovan.parks@gmail.com',
     packages=['metadbscan', 'metadbscan.plots'],
@@ -16,6 +16,5 @@ setup(
         "numpy >= 1.6.1",
         "scipy >= 0.10.1",
         "matplotlib >= 1.1.0",
-        "pysam >= 0.7.4",
-        "sqlite3 >= 2.6.0"],
+        "pysam >= 0.7.4"],
 )

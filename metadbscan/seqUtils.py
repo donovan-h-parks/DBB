@@ -23,6 +23,7 @@ import sys
 import gzip
 import logging
 
+
 def readSeqStats(seqStatsFile):
     '''Read file containing sequence statistics.'''
     seqStats = {}
@@ -31,9 +32,10 @@ def readSeqStats(seqStatsFile):
         for line in f:
             lineSplit = line.split('\t')
             seqStats[lineSplit[0]] = [int(lineSplit[1]), float(lineSplit[2]), float(lineSplit[3])]
-            
+
     return seqStats
-            
+
+
 def readFasta(fastaFile):
     '''Read sequences from FASTA file.'''
     try:
@@ -41,7 +43,7 @@ def readFasta(fastaFile):
             openFile = gzip.open
         else:
             openFile = open
-            
+
         seqs = {}
         for line in openFile(fastaFile):
             if line[0] == '>':
@@ -49,14 +51,14 @@ def readFasta(fastaFile):
                 seqs[seqId] = []
             else:
                 seqs[seqId].append(line[0:-1])
-                
+
         for seqId, seq in seqs.iteritems():
             seqs[seqId] = ''.join(seq)
     except:
         logger = logging.getLogger()
         logger.error("  [Error] Failed to process sequence file: " + fastaFile)
         sys.exit()
-               
+
     return seqs
 
 def readFastaSeqIds(fastaFile):
@@ -66,7 +68,7 @@ def readFastaSeqIds(fastaFile):
         if line[0] == '>':
             seqId = line[1:].partition(' ')[0].rstrip()
             seqIds.append(seqId)
-            
+
     return seqIds
 
 def readGenomicSeqsFromFasta(fastaFile, seqToIgnore=None):
@@ -83,10 +85,10 @@ def readGenomicSeqsFromFasta(fastaFile, seqToIgnore=None):
                 bRead = True
         elif bRead:
             seqs[seqId].append(line[0:-1])
-            
+
     for seqId, seq in seqs.iteritems():
         seqs[seqId] = ''.join(seq)
-            
+
     return seqs
 
 def writeFasta(seqs, outputFile):
@@ -95,7 +97,7 @@ def writeFasta(seqs, outputFile):
         fout = gzip.open(outputFile, 'wb')
     else:
         fout = open(outputFile, 'w')
-        
+
     for seqId, seq in seqs.iteritems():
         fout.write('>' + seqId + '\n')
         fout.write(seq + '\n')
@@ -105,21 +107,21 @@ def baseCount(seq):
     testSeq = seq.upper()
     a = testSeq.count('A')
     c = testSeq.count('C')
-    g = testSeq.count('G') 
+    g = testSeq.count('G')
     t = testSeq.count('T') + testSeq.count('U')
-    
+
     return a, c, g, t
 
 def calculateN50(seqLens):
     thresholdN50 = sum(seqLens) / 2.0
-    
+
     seqLens.sort(reverse=True)
-    
+
     testSum = 0
     for seqLen in seqLens:
         testSum += seqLen
         if testSum >= thresholdN50:
             N50 = seqLen
             break
-        
+
     return N50

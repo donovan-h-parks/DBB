@@ -19,12 +19,16 @@
 #                                                                             #
 ###############################################################################
 
+import os
 import random
+from collections import defaultdict
 
 from AbstractPlot import AbstractPlot
 from gcCoveragePlot import GcCoveragePlot
 
-from metadbscan.greedy import Greedy, readSeqStatsForBins
+from metadbscan.common import checkFileExists
+from metadbscan.seqUtils import readFasta, readSeqStats
+from metadbscan.greedy import Greedy
 
 import numpy as np
 
@@ -34,9 +38,31 @@ class TetraPcaPlot(AbstractPlot):
     def __init__(self, options):
         AbstractPlot.__init__(self, options)
         
-    def plot(self, binningFile, seqIds, pc, variance, minSeqLen, minCoreLen, bBoundingBoxes, bLabels, highlightedClusterId = None): 
-        # read clustering of sequences
-        seqStatsForClusters = readSeqStatsForBins(binningFile)
+    def plot(self, preprocessDir, binDir, seqIds, pc, variance, minSeqLen, minCoreLen, bBoundingBoxes, bLabels, highlightedClusterId = None): 
+        # read statistics for each scaffold
+        scaffoldStatsFile = os.path.join(preprocessDir, 'scaffolds.seq_stats.tsv')
+        checkFileExists(scaffoldStatsFile)
+        scaffoldStats = readSeqStats(scaffoldStatsFile)
+
+        # read scaffolds stats for binned sequences
+        binFiles = os.listdir(binDir)
+        binIdToSeqStats = defaultdict(list)
+        binnedSeqs = set()
+        for binFile in binFiles:
+            if not binFile.endswith('.fna'):
+                continue
+
+            binId = binFile[0:binFile.find('.')]
+
+            seqs = readFasta(os.path.join(binDir, binFile))
+            for seqId in seqs.keys():
+                binIdToSeqStats[binId].append([seqId] + scaffoldStats[seqId])
+                binnedSeqs.add(seqId)
+
+        # get scaffold stats for unbinned sequences
+        for seqId, stats in scaffoldStats.iteritems():
+            if seqId not in binnedSeqs:
+                binIdToSeqStats[Greedy.UNBINNED].append([seqId] + stats)
         
         # ensure pc matrix has at least 3 dimensions
         if pc.shape[1] == 1:
@@ -55,7 +81,8 @@ class TetraPcaPlot(AbstractPlot):
         
         # plot each bin
         clusterIdToColour = {}
-        for clusterId in sorted(seqStatsForClusters.keys()):
+        seqIds = list(seqIds)
+        for binId in sorted(binIdToSeqStats.keys()):
             drPC1 = []
             drPC2 = []
             drPC3 = []
@@ -63,9 +90,12 @@ class TetraPcaPlot(AbstractPlot):
             corePC1 = []
             corePC2 = []
             corePC3 = []
-            for seqStat in seqStatsForClusters[clusterId]:
-                seqId, seqLen, _, _ = seqStat     
-                seqIndex = np.where(seqIds == seqId)
+            for seqStat in binIdToSeqStats[binId]:
+                seqId, seqLen, GC, coverage = seqStat
+                try:  
+                    seqIndex = seqIds.index(seqId)
+                except:
+                    continue
                 
                 if seqLen > minCoreLen:
                     corePC1.append(pc[seqIndex, 0])
@@ -77,9 +107,9 @@ class TetraPcaPlot(AbstractPlot):
                     drPC3.append(pc[seqIndex, 2])
                 
             if highlightedClusterId == None:
-                if clusterId != Greedy.UNBINNED:
+                if binId != Greedy.UNBINNED:
                     color = (random.uniform(0.3, 1.0), random.uniform(0.3, 1.0), random.uniform(0.3, 1.0))
-                    clusterIdToColour[clusterId] = color
+                    clusterIdToColour[binId] = color
                     alpha = 0.7
                     zorder = 3
                 else:
@@ -87,7 +117,7 @@ class TetraPcaPlot(AbstractPlot):
                     alpha = 0.5
                     zorder = 1
             else:
-                if clusterId == highlightedClusterId:
+                if binId == highlightedClusterId:
                     color = (1.0, 0.0, 0.0)
                     alpha = 0.7
                     zorder = 3
@@ -108,14 +138,14 @@ class TetraPcaPlot(AbstractPlot):
                 axesPC1vsPC3.scatter(corePC1, corePC3, marker='s', s=10, lw=0.5, c=colorStr, alpha=alpha, zorder=zorder+1)
                 
             # plot bounding rect  
-            if highlightedClusterId == None or clusterId == highlightedClusterId:
+            if highlightedClusterId == None or binId == highlightedClusterId:
                 pc1 = drPC1 + corePC1
                 pc2 = drPC2 + corePC2
                 pc3 = drPC3 + corePC3
-                if len(pc1) > 1 and clusterId != Greedy.UNBINNED:
-                    self.boundingBox(zip(pc1, pc2), axesPC1vsPC2, str(clusterId), bBoundingBoxes, bLabels)
-                    self.boundingBox(zip(pc3, pc2), axesPC3vsPC2, str(clusterId), bBoundingBoxes, bLabels)
-                    self.boundingBox(zip(pc1, pc3), axesPC1vsPC3, str(clusterId), bBoundingBoxes, bLabels)
+                if len(pc1) > 1 and binId != Greedy.UNBINNED:
+                    self.boundingBox(zip(pc1, pc2), axesPC1vsPC2, str(binId), bBoundingBoxes, bLabels)
+                    self.boundingBox(zip(pc3, pc2), axesPC3vsPC2, str(binId), bBoundingBoxes, bLabels)
+                    self.boundingBox(zip(pc1, pc3), axesPC1vsPC3, str(binId), bBoundingBoxes, bLabels)
 
         # set labels
         axesPC1vsPC2.set_xlabel('PC1 (%.1f%%)' % (variance[0]*100))
@@ -149,6 +179,6 @@ class TetraPcaPlot(AbstractPlot):
                     
         # plot GC vs. coverage
         gcCoveragePlot = GcCoveragePlot(self.options)
-        gcCoveragePlot.plotOnAxes(axesGcCov, seqStatsForClusters, minSeqLen, minCoreLen, False, bBoundingBoxes, bLabels, highlightedClusterId, clusterIdToColour)
-                
-        self.fig.tight_layout(pad=5, w_pad=15, h_pad=15)
+        gcCoveragePlot.plotOnAxes(axesGcCov, binIdToSeqStats, minSeqLen, minCoreLen, False, bBoundingBoxes, bLabels, None, highlightedClusterId, clusterIdToColour, None)
+        
+        self.fig.tight_layout(pad=2, w_pad=2, h_pad=2)

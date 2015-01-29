@@ -24,18 +24,20 @@ import errno
 import sys
 import logging
 
+
 def checkFileExists(inputFile):
     if not os.path.exists(inputFile):
         logger = logging.getLogger()
         logger.error('  [Error] Input file does not exists: ' + inputFile + '\n')
         sys.exit()
-        
+
+
 def isDirEmpty(path):
-    if not os.path.exists(path): 
+    if not os.path.exists(path):
         os.makedirs(path)
-        
+
     return not os.listdir(path)
-        
+
 def makeSurePathExists(path):
     try:
         os.makedirs(path)
@@ -44,9 +46,9 @@ def makeSurePathExists(path):
             logger = logging.getLogger()
             logger.error('  [Error] Specified path does not exist: ' + path + '\n')
             sys.exit()
-        
+
 def binIdFromFilename(filename):
     binId = os.path.basename(filename)
     binId = os.path.splitext(binId)[0]
-    
+
     return binId
