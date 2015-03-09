@@ -1,16 +1,16 @@
 from distutils.core import setup
 
 setup(
-    name='MetaDBSCAN',
-    version='0.0.4',
+    name='dbb',
+    version='0.0.1',
     author='Donovan Parks',
     author_email='donovan.parks@gmail.com',
-    packages=['metadbscan', 'metadbscan.plots'],
-    scripts=['bin/metadbscan'],
+    packages=['dbb', 'dbb.plots'],
+    scripts=['bin/dbb'],
     package_data={'': ['data/*.txt']},
-    url='http://pypi.python.org/pypi/metadbscan/',
+    url='http://pypi.python.org/pypi/dbb/',
     license='GPL3',
-    description='Bin contigs into population genomes.',
+    description='Bin scaffolds into population genomes.',
     long_description=open('README.md').read(),
     install_requires=[
         "numpy >= 1.6.1",
