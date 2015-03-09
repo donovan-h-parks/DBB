@@ -1,6 +1,6 @@
-# MetaDBSCAN
+# Distribution-based Binner (DBB)
 
-Cluster scaffolds from a single metagenomic sample into population genomes using a distribution-based binning (DBB) approach.
+Cluster scaffolds from a single metagenomic sample into population genomes using a distribution-based binning approach.
 
 
 ## Install
