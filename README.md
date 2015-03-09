@@ -1,6 +1,6 @@
 # MetaDBSCAN
 
-Bin contigs from a single metagenomic sample into population genomes.
+Cluster scaffolds from a single metagenomic sample into population genomes using a distribution-based binning (DBB) approach.
 
 
 ## Install
@@ -11,7 +11,7 @@ The simplest way to install this package is through pip:
 
 ## Cite
 
-If you find this package useful, please cite this git repository (https://github.com/dparks1134/DBB)
+If you find this package useful, please cite this git repository (https://github.com/dparks1134/dbb)
 
 ## Copyright
 
