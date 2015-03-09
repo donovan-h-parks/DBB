@@ -6,7 +6,7 @@ Bin contigs from a single metagenomic sample into population genomes.
 ## Install
 
 The simplest way to install this package is through pip:
-> sudo pip install comparem
+> sudo pip install dbb
 
 
 ## Cite
