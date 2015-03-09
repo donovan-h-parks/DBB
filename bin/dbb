@@ -1,0 +1,296 @@
+#!/srv/sw/python/2.7.4/bin/python
+
+###############################################################################
+#                                                                             #
+#    This program is free software: you can redistribute it and/or modify     #
+#    it under the terms of the GNU General Public License as published by     #
+#    the Free Software Foundation, either version 3 of the License, or        #
+#    (at your option) any later version.                                      #
+#                                                                             #
+#    This program is distributed in the hope that it will be useful,          #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of           #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the            #
+#    GNU General Public License for more details.                             #
+#                                                                             #
+#    You should have received a copy of the GNU General Public License        #
+#    along with this program. If not, see <http://www.gnu.org/licenses/>.     #
+#                                                                             #
+###############################################################################
+
+__prog_desc__ = 'bin contigs into population genomes'
+
+__author__ = 'Donovan Parks'
+__copyright__ = 'Copyright 2013'
+__credits__ = ['Donovan Parks']
+__license__ = 'GPL3'
+__version__ = '0.0.4'
+__maintainer__ = 'Donovan Parks'
+__email__ = 'donovan.parks@gmail.com'
+__status__ = 'Development'
+
+import sys
+import argparse
+
+from dbb.main import DistributionBinner
+
+
+def printHelp():
+    print ''
+    print '                ...::: DBB v' + __version__ + ' :::...'''
+    print '''\
+
+  Bin scaffolds from a single metagenome into population genomes.
+
+  Standard workflow:
+    preprocess  -> Calculate sequence statistics required for binning
+    core        -> Bin contigs into cores using a greedy approach
+    refine      -> Refine core bins
+    extract     -> Extract scaffolds into population genome bins
+
+    bin_wf      -> Runs preprocess, core, refine, and extract
+
+  Query:
+    compare     -> Assess if a scaffold might belong in a bin
+    merge_stats -> Calculate statistics indicating if two bins are candidates for merging
+    unbinned    -> Calculate statistics indicating if unbinned scaffolds should be binned
+
+  Bin utilities:
+    merge      -> Merge two bins
+    expand     -> Expand bins to include additional unbinned scaffolds
+    bin_file   -> Create file indicating bin assignments
+    bin_stats  -> Create file with statistics for binned scaffolds
+
+  Plots:
+    tetra_pca   -> PCA plot of tetranucleotide signatures
+    gc_cov      -> Plot GC vs coverage
+
+  Use: checkm <command> -h for command specific help
+    '''
+
+if __name__ == '__main__':
+    # initialize the options parser
+    parser = argparse.ArgumentParser(add_help=False)
+    subparsers = parser.add_subparsers(help="--", dest='subparser_name')
+
+    # partition parser
+    preprocess_parser = subparsers.add_parser('preprocess',
+                                    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                    description='Calculate sequence statistics required for binning.')
+    preprocess_parser.add_argument('scaffold_file', help='file containing scaffolds to bin')
+    preprocess_parser.add_argument('bam_file', help='file indicating mapping of reads to scaffolds')
+    preprocess_parser.add_argument('output_dir', help='output directory')
+    preprocess_parser.add_argument('-s', '--min_seq_len', help='filter out contigs below this length', type=int, default=1000)
+    preprocess_parser.add_argument('-p', '--percent', help='percent increase in sequence length', type=float, default=0.2)
+    preprocess_parser.add_argument('-n', '--min_n', help="minimum number of N's required to break a scaffold", type=int, default=10)
+    preprocess_parser.add_argument('-a', '--min_align', help='minimum alignment length as percentage of read length', type=float, default=0.98)
+    preprocess_parser.add_argument('-e', '--max_edit_dist', help='maximum edit distance as percentage of read length', type=float, default=0.02)
+    preprocess_parser.add_argument('--inproper_pairs', dest='bAllowInproperPairs', action="store_true", default=False, help="use inproperly paired reads in coverage calculation")
+    preprocess_parser.add_argument('-c', '--coverage_type', choices=['mean', 'trimmed_mean'], help='type of coverage to calculate', default='trimmed_mean')
+    preprocess_parser.add_argument('-t', '--threads', help='number of worker threads', type=int, default=1)
+    preprocess_parser.add_argument('-q', '--quiet', help='suppress output', action='store_true')
+
+    # bin contigs usin a greedy approach
+    core_parser = subparsers.add_parser('core',
+                                    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                    description='Bin contigs into cores using a greedy approach.')
+    core_parser.add_argument('preprocess_dir', help='directory containing results of preprocess command')
+    core_parser.add_argument('binning_file', help='output file specifying bin of each contig partition')
+
+    core_parser.add_argument('--build_dist_per', help='width of distribution for building cores; integer between 0 and 100', type=int, choices=xrange(0, 101), default=90, metavar='')
+    core_parser.add_argument('--merge_dist_per', help='width of distributions for merging cores; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+
+    core_parser.add_argument('-s', '--min_seq_len', help='filter out contigs below this length', type=int, default=10000)
+    core_parser.add_argument('-b', '--min_bin_size', help='minimum base pairs to retain a core bin', type=int, default=100000)
+
+    core_parser.add_argument('-t', '--threads', help='number of worker threads', type=int, default=1)
+    core_parser.add_argument('-q', '--quiet', help='suppress output', action='store_true')
+
+    # refine bins
+    refine_parser = subparsers.add_parser('refine',
+                                    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                    description='Refine core bins.')
+    refine_parser.add_argument('preprocess_dir', help='directory containing results of preprocess command')
+    refine_parser.add_argument('binning_file', help='file specifying initial core bins')
+    refine_parser.add_argument('refined_bin_file', help='output file specifying refined bins')
+
+    refine_parser.add_argument('--gc_dist_per', help='width of GC distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    refine_parser.add_argument('--td_dist_per', help='width of TD distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    refine_parser.add_argument('--cov_dist_per', help='width of coverage distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+
+    refine_parser.add_argument('-s', '--min_seq_len', help='filter out unbinned contigs below this length', type=int, default=5000)
+
+    refine_parser.add_argument('-t', '--threads', help='number of worker threads', type=int, default=1)
+    refine_parser.add_argument('-q', '--quiet', help='suppress output', action='store_true')
+
+    # cluster parser
+    extract_parser = subparsers.add_parser('extract',
+                                    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                    description='Extract scaffolds into population genome bins.')
+    extract_parser.add_argument('preprocess_dir', help='directory containing results of preprocess command')
+    extract_parser.add_argument('scaffold_file', help='scaffold file containing binned contigs')
+    extract_parser.add_argument('binning_file', help='file specifying bin of each contig partition')
+    extract_parser.add_argument('bin_dir', help='output directory for bins')
+    extract_parser.add_argument('-q', '--quiet', help='suppress output', action='store_true')
+
+    # bin workflow parser
+    bin_wf_parser = subparsers.add_parser('bin_wf',
+                                    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                    description='Runs preprocess, core, refine, and extract.')
+    bin_wf_parser.add_argument('scaffold_file', help='file containing scaffolds to bin')
+    bin_wf_parser.add_argument('bam_file', help='file indicating mapping of reads to scaffolds')
+    bin_wf_parser.add_argument('preprocess_dir', help='output directory for preprocessing results')
+    bin_wf_parser.add_argument('binning_prefix', help='prefix for binning files')
+    bin_wf_parser.add_argument('bin_dir_prefix', help='output directory for bins')
+    bin_wf_parser.add_argument('-s', '--min_seq_len', help='filter out contigs below this length', type=int, default=1000)
+    bin_wf_parser.add_argument('-p', '--percent', help='percent increase in sequence length', type=float, default=0.2)
+    bin_wf_parser.add_argument('-n', '--min_n', help="minimum number of N's required to break a scaffold", type=int, default=10)
+    bin_wf_parser.add_argument('-a', '--min_align', help='minimum alignment length as percentage of read length', type=float, default=0.98)
+    bin_wf_parser.add_argument('-e', '--max_edit_dist', help='maximum edit distance as percentage of read length', type=float, default=0.02)
+    bin_wf_parser.add_argument('--inproper_pairs', dest='bAllowInproperPairs', action="store_true", default=False, help="use inproperly paired reads in coverage calculation")
+    bin_wf_parser.add_argument('-c', '--coverage_type', choices=['mean', 'trimmed_mean'], help='type of coverage to calculate', default='trimmed_mean')
+    bin_wf_parser.add_argument('--build_dist_per', help='width of distribution for building cores; integer between 0 and 100', type=int, choices=xrange(0, 101), default=90, metavar='')
+    bin_wf_parser.add_argument('--merge_dist_per', help='width of distributions for merging cores; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    bin_wf_parser.add_argument('--min_core_seq_len', help='minimum length of contigs for a bore', type=int, default=10000)
+    bin_wf_parser.add_argument('--min_core_bin_size', help='minimum base pairs to retain a core bin', type=int, default=100000)
+    bin_wf_parser.add_argument('--gc_dist_per', help='width of GC distribution for defining neighbours during refinement; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    bin_wf_parser.add_argument('--td_dist_per', help='width of TD distribution for defining neighbours during refinement; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    bin_wf_parser.add_argument('--cov_dist_per', help='width of coverage distribution for defining neighbours during refinement; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    bin_wf_parser.add_argument('--min_refine_seq_len', help='filter out unbinned contigs below this length', type=int, default=5000)
+    bin_wf_parser.add_argument('-t', '--threads', help='number of worker threads', type=int, default=1)
+    bin_wf_parser.add_argument('-q', '--quiet', help='suppress output', action='store_true')
+
+    # compare scaffold to bin
+    compare_parser = subparsers.add_parser('compare',
+                                    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                    description='Assess if a scaffold might belong in a bin.')
+    compare_parser.add_argument('preprocess_dir', help='directory containing results of preprocess command')
+    compare_parser.add_argument('binning_file', help='file specifying bins')
+    compare_parser.add_argument('bin_id', help='bin of interest', type=int)
+    compare_parser.add_argument('scaffold_id', help='scaffold of interest')
+    compare_parser.add_argument('--gc_dist_per', help='width of GC distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    compare_parser.add_argument('--td_dist_per', help='width of TD distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    compare_parser.add_argument('--cov_dist_per', help='width of coverage distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    compare_parser.add_argument('-q', '--quiet', help='suppress output', action='store_true')
+
+    # calculate statistics indicating if two bins are candidates for merging
+    merge_stats_parser = subparsers.add_parser('merge_stats',
+                                    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                    description='Calculate statistics indicating if two bins are candidates for merging.')
+    merge_stats_parser.add_argument('preprocess_dir', help='directory containing results of preprocess command')
+    merge_stats_parser.add_argument('binning_file', help='file specifying bins')
+    merge_stats_parser.add_argument('output_file', help='output file with merging statistics')
+    merge_stats_parser.add_argument('--gc_dist_per', help='width of GC distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    merge_stats_parser.add_argument('--td_dist_per', help='width of TD distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    merge_stats_parser.add_argument('--cov_dist_per', help='width of coverage distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    merge_stats_parser.add_argument('-q', '--quiet', help='suppress output', action='store_true')
+
+    # calculate statistics indicating if two bins are candidates for merging
+    unbinned_parser = subparsers.add_parser('unbinned',
+                                    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                    description='Calculate statistics indicating if unbinned scaffolds should be binned.')
+    unbinned_parser.add_argument('preprocess_dir', help='directory containing results of preprocess command')
+    unbinned_parser.add_argument('binning_file', help='file specifying bins')
+    unbinned_parser.add_argument('output_file', help='output file with merging statistics')
+    unbinned_parser.add_argument('--gc_dist_per', help='width of GC distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    unbinned_parser.add_argument('--td_dist_per', help='width of TD distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    unbinned_parser.add_argument('--cov_dist_per', help='width of coverage distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    unbinned_parser.add_argument('--min_scaffold_len', help='ignore unbinned scaffolds below this length', type=int, default=5000)
+    unbinned_parser.add_argument('--min_contig_len', help='ignore contigs within a scaffolds below this length', type=int, default=1000)
+    unbinned_parser.add_argument('-q', '--quiet', help='suppress output', action='store_true')
+
+    # merge two bins
+    merge_parser = subparsers.add_parser('merge',
+                                    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                    description='Merge two bins.')
+    merge_parser.add_argument('binning_file', help='file specifying bins')
+    merge_parser.add_argument('bin1_id', help='id of first bin', type=int)
+    merge_parser.add_argument('bin2_id', help='id of second bin', type=int)
+    merge_parser.add_argument('merge_id', help='desired id of merged bin', type=int)
+    merge_parser.add_argument('output_file', help='output bins file')
+    merge_parser.add_argument('-q', '--quiet', help='suppress output', action='store_true')
+
+    # expand bins to include additional unbinned scaffolds
+    expand_parser = subparsers.add_parser('expand',
+                                    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                    description='Expand bins to include additional unbinned scaffolds.')
+    expand_parser.add_argument('unbinned_stats_file', help='file specifying statistics for unbinned scaffolds (see unbinned command)')
+    expand_parser.add_argument('binning_file', help='file specifying current binning')
+    expand_parser.add_argument('output_file', help='output specifying new binning')
+    expand_parser.add_argument('--score_threshold', help='binning score threshold for including unbinned scaffolds', type=float, default=0.5)
+    expand_parser.add_argument('-q', '--quiet', help='suppress output', action='store_true')
+
+    # create file indicating bin assignments
+    bin_file_parser = subparsers.add_parser('bin_file',
+                                    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                    description='Create file indicating bin assignments.')
+    bin_file_parser.add_argument('preprocess_dir', help='directory containing results of preprocess command')
+    bin_file_parser.add_argument('bin_dir', help='directory containing bins')
+    bin_file_parser.add_argument('binning_file', help='name of binning file to create')
+    bin_file_parser.add_argument('-q', '--quiet', help='suppress output', action='store_true')
+
+    # create file indicating bin assignments
+    bin_stats_parser = subparsers.add_parser('bin_stats',
+                                    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                    description='Create file with statistics for binned scaffolds.')
+    bin_stats_parser.add_argument('preprocess_dir', help='directory containing results of preprocess command')
+    bin_stats_parser.add_argument('bin_dir', help='directory containing bins')
+    bin_stats_parser.add_argument('stats_file', help='name of statistics file to create')
+    bin_stats_parser.add_argument('-q', '--quiet', help='suppress output', action='store_true')
+
+    # generic arguments for plots
+    plot_parser = argparse.ArgumentParser(add_help=False)
+    plot_parser.add_argument('plot_folder', help="folder to hold plots")
+    plot_parser.add_argument('--image_type', default='png', choices=['eps', 'pdf', 'png', 'ps', 'svg'], help='desired image type')
+    plot_parser.add_argument('--dpi', type=int, default=300, help='desired DPI of output image')
+    plot_parser.add_argument('--font_size', type=int, default=8, help='Desired font size')
+
+    # PCA plot of tetranucleotide signatures
+    plot_tetra_pca_parser = subparsers.add_parser('tetra_pca',
+                                        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                        parents=[plot_parser],
+                                        description='PCA plot of tetranucleotide signatures.')
+    plot_tetra_pca_parser.add_argument('preprocess_dir', help='directory containing results of preprocess command')
+    plot_tetra_pca_parser.add_argument('bin_dir', help='directory with bins to plot')
+    plot_tetra_pca_parser.add_argument('--width', type=float, default=6.5, help='width of output image')
+    plot_tetra_pca_parser.add_argument('--height', type=float, default=6.5, help='height of output image')
+    plot_tetra_pca_parser.add_argument('-c', '--min_core_len', help='minimum sequence length to be define as a core', type=int, default=5000)
+    plot_tetra_pca_parser.add_argument('-s', '--min_seq_len', help='filter out sequences below this length', type=int, default=1000)
+    plot_tetra_pca_parser.add_argument('-i', '--individual', help='create individual plots highlighting each bin', action='store_true')
+    plot_tetra_pca_parser.add_argument('--no_bounding_box', help='do not plot bin bounding boxes', action='store_true')
+    plot_tetra_pca_parser.add_argument('--no_labels', help='do not plot bin labels', action='store_true')
+    plot_tetra_pca_parser.add_argument('-q', '--quiet', help='suppress output', action='store_true')
+
+    # Plot GC vs coverage
+    plot_gc_coverage_parser = subparsers.add_parser('gc_cov',
+                                        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                        parents=[plot_parser],
+                                        description='Plot GC vs coverage.')
+    plot_gc_coverage_parser.add_argument('preprocess_dir', help='directory containing results of preprocess command')
+    plot_gc_coverage_parser.add_argument('bin_dir', help='directory with bins to plot')
+    plot_gc_coverage_parser.add_argument('--width', type=float, default=6.5, help='width of output image')
+    plot_gc_coverage_parser.add_argument('--height', type=float, default=6.5, help='height of output image')
+    plot_gc_coverage_parser.add_argument('-c', '--min_core_len', help='minimum sequence length to be define as a core', type=int, default=10000)
+    plot_gc_coverage_parser.add_argument('-s', '--min_seq_len', help='filter out sequences below this length', type=int, default=1000)
+    plot_gc_coverage_parser.add_argument('-i', '--individual', help='create individual plots highlighting each bin', action='store_true')
+    plot_gc_coverage_parser.add_argument('--coverage_linear', help='plot coverage on a linear scale', action='store_true')
+    plot_gc_coverage_parser.add_argument('--hide_bounding_boxes', help='do not plot bin bounding boxes', action='store_true')
+    plot_gc_coverage_parser.add_argument('--hide_labels', help='do not plot bin labels', action='store_true')
+    plot_gc_coverage_parser.add_argument('--legend', help='file specifying legend items', default=None)
+    plot_gc_coverage_parser.add_argument('-q', '--quiet', help='suppress output', action='store_true')
+
+    # get and check options
+    args = None
+    if(len(sys.argv) == 1 or sys.argv[1] == '-h' or sys.argv == '--help'):
+        printHelp()
+        sys.exit(0)
+    else:
+        args = parser.parse_args()
+
+    try:
+        dbb = DistributionBinner()
+        dbb.run(args)
+    except SystemExit:
+        print "\n  Controlled exit resulting from an unrecoverable error or warning."
+    except:
+        print "\n  Unexpected error:", sys.exc_info()[0]
+        raise
