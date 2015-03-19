@@ -73,6 +73,7 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - preprocess] Calculate sequence statistics required for binning.')
         self.logger.info('*******************************************************************************')
+        self.logger.info('')
 
         if not isDirEmpty(args.output_dir):
             self.logger.warning('  [Warning] Specified output path must be empty: ' + args.output_dir + '\n')
@@ -81,7 +82,18 @@ class DistributionBinner(object):
         argsStr = '\n'.join(map(str.strip, str(args).replace('Namespace(', '').replace(')', '').split(',')))
 
         preprocess = Preprocess()
-        preprocess.run(args.scaffold_file, args.bam_file, args.min_seq_len, args.percent, args.min_n, args.min_align, args.max_edit_dist, args.bAllowInproperPairs, args.coverage_type, args.threads, args.output_dir, argsStr)
+        preprocess.run(args.scaffold_file,
+                       args.bam_file,
+                       args.min_seq_len,
+                       args.percent,
+                       args.min_n,
+                       args.min_align,
+                       args.max_edit_dist,
+                       args.bAllowImproperPairs,
+                       args.coverage_type,
+                       args.threads,
+                       args.output_dir,
+                       argsStr)
 
         self.timeKeeper.printTimeStamp()
 
@@ -90,6 +102,7 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - core] Bin contigs into cores using a greedy approach.')
         self.logger.info('*******************************************************************************')
+        self.logger.info('')
 
         argsStr = ', '.join(map(str.strip, str(args).replace('Namespace(', '').replace(')', '').split(',')))
 
@@ -103,6 +116,7 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - refine] Refine core bins.')
         self.logger.info('*******************************************************************************')
+        self.logger.info('')
 
         argsStr = ', '.join(map(str.strip, str(args).replace('Namespace(', '').replace(')', '').split(',')))
 
@@ -116,6 +130,7 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - extract] Extract scaffolds into population genome bins.')
         self.logger.info('*******************************************************************************')
+        self.logger.info('')
 
         self.logger.info('  Extracting scaffolds assigned to bins.')
         extractScaffolds = ExtractScaffolds()
@@ -131,6 +146,7 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - bin_file] Creating file indicating bin assignments.')
         self.logger.info('*******************************************************************************')
+        self.logger.info('')
 
         # get bin for each scaffold
         binFiles = os.listdir(args.bin_dir)
@@ -173,6 +189,7 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - bin_stats] Creating file with statistics for binned scaffolds.')
         self.logger.info('*******************************************************************************')
+        self.logger.info('')
 
         # get bin for each scaffold
         binFiles = os.listdir(args.bin_dir)
@@ -206,6 +223,7 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - compare] Assess if a scaffold might belong in a bin.')
         self.logger.info('*******************************************************************************')
+        self.logger.info('')
 
         compare = Compare()
         compare.run(args.preprocess_dir, args.binning_file, args.bin_id, args.scaffold_id, args.gc_dist_per, args.td_dist_per, args.cov_dist_per)
@@ -217,6 +235,7 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - merge_stats] Calculate merging statistics.')
         self.logger.info('*******************************************************************************')
+        self.logger.info('')
 
         merge = Merge()
         merge.run(args.preprocess_dir, args.binning_file, args.gc_dist_per, args.td_dist_per, args.cov_dist_per, args.output_file)
@@ -228,6 +247,7 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - unbinned] Calculate statistics for unbinned scaffolds.')
         self.logger.info('*******************************************************************************')
+        self.logger.info('')
 
         unbinned = Unbinned()
         unbinned.run(args.preprocess_dir, args.binning_file, args.gc_dist_per, args.td_dist_per, args.cov_dist_per, args.min_scaffold_len, args.min_contig_len, args.output_file)
@@ -239,6 +259,7 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - merge] Merge two bins.')
         self.logger.info('*******************************************************************************')
+        self.logger.info('')
 
         # read bins file
         header = None
@@ -276,6 +297,7 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - merge] Merge two bins.')
         self.logger.info('*******************************************************************************')
+        self.logger.info('')
 
         expand = Expand()
         expand.run(args.unbinned_stats_file, args.binning_file, args.score_threshold, args.output_file)
@@ -287,6 +309,7 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - tetra_pca] PCA plot of tetranucleotide signatures.')
         self.logger.info('*******************************************************************************')
+        self.logger.info('')
 
         if not os.path.exists(args.plot_folder):
             os.makedirs(args.plot_folder)
@@ -338,6 +361,7 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - gc_cov] Plot GC vs coverage.')
         self.logger.info('*******************************************************************************')
+        self.logger.info('')
 
         if not os.path.exists(args.plot_folder):
             os.makedirs(args.plot_folder)

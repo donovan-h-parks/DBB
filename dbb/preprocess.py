@@ -31,13 +31,13 @@ import numpy as np
 from genomicSignatures import GenomicSignatures
 from common import checkFileExists
 from defaultValues import DefaultValues
-from seqUtils import readFasta, baseCount
+from seqUtils import readSeq, baseCount
 from splitScaffolds import SplitScaffolds
 
 
 class ReadLoader:
     """Callback for counting aligned reads with pysam.fetch"""
-    def __init__(self, refLength, minAlignPer, maxEditDistPer, bAllowInproperPairs):
+    def __init__(self, refLength, minAlignPer, maxEditDistPer, bAllowImproperPairs):
         self.minAlignPer = minAlignPer
         self.maxEditDistPer = maxEditDistPer
 
@@ -50,7 +50,7 @@ class ReadLoader:
         self.numFailedEditDist = 0
         self.numFailedProperPair = 0
 
-        self.bAllowInproperPairs = bAllowInproperPairs
+        self.bAllowImproperPairs = bAllowImproperPairs
 
         self.coverage = np.zeros(refLength)
 
@@ -69,7 +69,7 @@ class ReadLoader:
             self.numFailedAlignLen += 1
         elif read.opt('NM') > self.maxEditDistPer * read.rlen:
             self.numFailedEditDist += 1
-        elif not self.bAllowInproperPairs and not read.is_proper_pair:
+        elif not self.bAllowImproperPairs and not read.is_proper_pair:
             self.numFailedProperPair += 1
         else:
             self.numMappedReads += 1
@@ -99,7 +99,7 @@ class Preprocess(object):
 
         return float(gc) / (gc + at)
 
-    def __workerThread(self, bamFile, scaffolds, genomicSig, minSeqLen, percent, minN, minAlignLen, maxEditDist, bAllowInproperPairs, coverageType, queueIn, queueOut):
+    def __workerThread(self, bamFile, scaffolds, genomicSig, minSeqLen, percent, minN, minAlignLen, maxEditDist, bAllowImproperPairs, coverageType, queueIn, queueOut):
         """Process each data item in parallel."""
 
         splitScaffolds = SplitScaffolds()
@@ -112,7 +112,7 @@ class Preprocess(object):
             bamfile = pysam.Samfile(bamFile, 'rb')
 
             for scaffoldId, scaffoldLen in zip(scaffoldIds, scaffoldLens):
-                readLoader = ReadLoader(scaffoldLen, minAlignLen, maxEditDist, bAllowInproperPairs)
+                readLoader = ReadLoader(scaffoldLen, minAlignLen, maxEditDist, bAllowImproperPairs)
                 bamfile.fetch(scaffoldId, 0, scaffoldLen, callback=readLoader)
 
                 # identify contigs in scaffold and calculate contig statistics
@@ -204,7 +204,7 @@ class Preprocess(object):
 
             bamfile.close()
 
-    def __writerThread(self, genomicSig, scaffoldSeqStatsFile, scaffoldTetraSigFile, contigSeqStatsFile, contigTetraSigFile, covDistFile, numRefSeqs, bAllowInproperPairs, writerQueue):
+    def __writerThread(self, genomicSig, scaffoldSeqStatsFile, scaffoldTetraSigFile, contigSeqStatsFile, contigTetraSigFile, covDistFile, numRefSeqs, bAllowImproperPairs, writerQueue):
         """Store or write results of worker threads in a single thread."""
 
         scaffoldStatsOut = open(scaffoldSeqStatsFile, 'w')
@@ -301,7 +301,7 @@ class Preprocess(object):
             print '      # reads failing alignment length: %d (%.1f%%)' % (totalFailedAlignLen, float(totalFailedAlignLen) * 100 / totalReads)
             print '      # reads failing edit distance: %d (%.1f%%)' % (totalFailedEditDist, float(totalFailedEditDist) * 100 / totalReads)
 
-            if not bAllowInproperPairs:
+            if not bAllowImproperPairs:
                 print '      # reads not properly paired: %d (%.1f%%)' % (totalFailedProperPair, float(totalFailedProperPair) * 100 / totalReads)
 
             print ''
@@ -338,14 +338,19 @@ class Preprocess(object):
 
         self.logger.info('    Min. distribution length: %d, max. distribution length: %d' % (min(t.keys()), max(t.keys())))
 
-    def run(self, scaffoldFile, bamFile, minSeqLen, percent, minN, minAlignLen, maxEditDist, bAllowInproperPairs, coverageType, numThreads, outputDir, argsStr):
+    def run(self, scaffoldFile, bamFile, minSeqLen, percent, minN, minAlignLen, maxEditDist, bAllowImproperPairs, coverageType, numThreads, outputDir, argsStr):
         checkFileExists(scaffoldFile)
         checkFileExists(bamFile)
 
         # read scaffolds
         self.logger.info('  Reading scaffolds.')
-        scaffolds = readFasta(scaffoldFile)
-        self.logger.info('    Scaffolds: %d' % len(scaffolds))
+        scaffolds = {}
+        numScaffolds = 0
+        for seqId, seq in readSeq(scaffoldFile):
+            numScaffolds += 1
+            if len(seq) >= minSeqLen:
+                scaffolds[seqId] = seq
+        self.logger.info('    Scaffolds: %d' % numScaffolds)
 
         # process reference sequences in parallel
         self.logger.info('')
@@ -392,7 +397,7 @@ class Preprocess(object):
         try:
             self.logger.info('')
             self.logger.info('  Processing reference scaffolds.')
-            workerProc = [mp.Process(target=self.__workerThread, args=(bamFile, scaffolds, gs, minSeqLen, percent, minN, minAlignLen, maxEditDist, bAllowInproperPairs, coverageType, workerQueue, writerQueue)) for _ in range(numThreads)]
+            workerProc = [mp.Process(target=self.__workerThread, args=(bamFile, scaffolds, gs, minSeqLen, percent, minN, minAlignLen, maxEditDist, bAllowImproperPairs, coverageType, workerQueue, writerQueue)) for _ in range(numThreads)]
 
             scaffoldSeqStatFile = os.path.join(outputDir, 'scaffolds.seq_stats.tsv')
             scaffoldTetraSigFile = os.path.join(outputDir, 'scaffolds.tetra.tsv')
@@ -400,7 +405,7 @@ class Preprocess(object):
             contigTetraSigFile = os.path.join(outputDir, 'contigs.tetra.tsv')
             covDistFile = os.path.join(outputDir, 'coverage_dist.txt')
 
-            writeProc = mp.Process(target=self.__writerThread, args=(gs, scaffoldSeqStatFile, scaffoldTetraSigFile, contigSeqStatFile, contigTetraSigFile, covDistFile, len(filteredRefSeqs), bAllowInproperPairs, writerQueue))
+            writeProc = mp.Process(target=self.__writerThread, args=(gs, scaffoldSeqStatFile, scaffoldTetraSigFile, contigSeqStatFile, contigTetraSigFile, covDistFile, len(filteredRefSeqs), bAllowImproperPairs, writerQueue))
 
             writeProc.start()
 
