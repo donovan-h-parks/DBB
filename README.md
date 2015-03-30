@@ -8,7 +8,7 @@ Cluster scaffolds from a single metagenomic sample into population genomes using
 The simplest way to install this package is through pip:
 > sudo pip install dbb
 
-DBB relies on pysam v0.7.7. 
+DBB relies on numpy, scipy, matplotlib, and pysam v0.7.x. 
 
 ## Cite
 
