@@ -107,7 +107,7 @@ class DistributionBinner(object):
         argsStr = ', '.join(map(str.strip, str(args).replace('Namespace(', '').replace(')', '').split(',')))
 
         greedy = Greedy()
-        greedy.run(args.preprocess_dir, args.min_seq_len, args.min_bin_size, args.build_dist_per, args.merge_dist_per, args.threads, args.binning_file, argsStr)
+        greedy.run(args.preprocess_dir, args.min_core_len, args.min_bin_size, args.build_dist_per, args.merge_dist_per, args.threads, args.binning_file, argsStr)
 
         self.timeKeeper.printTimeStamp()
 
@@ -121,7 +121,7 @@ class DistributionBinner(object):
         argsStr = ', '.join(map(str.strip, str(args).replace('Namespace(', '').replace(')', '').split(',')))
 
         refineBins = RefineBins()
-        refineBins.run(args.preprocess_dir, args.binning_file, args.min_seq_len, args.gc_dist_per, args.td_dist_per, args.cov_dist_per, args.threads, args.refined_bin_file, argsStr)
+        refineBins.run(args.preprocess_dir, args.binning_file, args.min_refine_len, args.gc_dist_per, args.td_dist_per, args.cov_dist_per, args.threads, args.refined_bin_file, argsStr)
 
         self.timeKeeper.printTimeStamp()
 
@@ -437,14 +437,13 @@ class DistributionBinner(object):
             args.output_dir = args.preprocess_dir
             self.preprocess(args)
 
+            args.min_seq_len = args.min_refine_len
+
             args.binning_file = args.binning_prefix + '.core.tsv'
-            args.min_seq_len = args.min_core_seq_len
             args.min_bin_size = args.min_core_bin_size
             self.core(args)
 
             args.refined_bin_file = args.binning_prefix + '.refine.tsv'
-            args.min_seq_len = args.min_refine_seq_len
-
             self.refine(args)
 
             args.binning_file = args.binning_prefix + '.core.tsv'

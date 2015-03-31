@@ -26,6 +26,7 @@ from seqUtils import readFasta, readSeqStats
 
 from greedy import Greedy, readSeqStatsForBins
 
+
 class ExtractScaffolds(object):
     def __init__(self):
         self.logger = logging.getLogger()

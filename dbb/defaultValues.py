@@ -1,8 +1,4 @@
 ###############################################################################
-#
-# defaultValues.py - store default values used in many places in CheckM
-#
-###############################################################################
 #                                                                             #
 #    This program is free software: you can redistribute it and/or modify     #
 #    it under the terms of the GNU General Public License as published by     #

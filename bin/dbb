@@ -23,7 +23,7 @@ __author__ = 'Donovan Parks'
 __copyright__ = 'Copyright 2013'
 __credits__ = ['Donovan Parks']
 __license__ = 'GPL3'
-__version__ = '1.0.0'
+__version__ = '1.0.1'
 __maintainer__ = 'Donovan Parks'
 __email__ = 'donovan.parks@gmail.com'
 __status__ = 'Development'
@@ -96,10 +96,10 @@ if __name__ == '__main__':
     core_parser.add_argument('preprocess_dir', help='directory containing results of preprocess command')
     core_parser.add_argument('binning_file', help='output file specifying bin of each contig partition')
 
-    core_parser.add_argument('--build_dist_per', help='width of distribution for building cores; integer between 0 and 100', type=int, choices=xrange(0, 101), default=90, metavar='')
+    core_parser.add_argument('--build_dist_per', help='width of distribution for building cores; integer between 0 and 100', type=int, choices=xrange(0, 101), default=80, metavar='')
     core_parser.add_argument('--merge_dist_per', help='width of distributions for merging cores; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
 
-    core_parser.add_argument('-s', '--min_seq_len', help='filter out contigs below this length', type=int, default=10000)
+    core_parser.add_argument('--min_core_len', help='minimum length of contigs for a core', type=int, default=10000)
     core_parser.add_argument('-b', '--min_bin_size', help='minimum base pairs to retain a core bin', type=int, default=100000)
 
     core_parser.add_argument('-t', '--threads', help='number of worker threads', type=int, default=1)
@@ -113,11 +113,11 @@ if __name__ == '__main__':
     refine_parser.add_argument('binning_file', help='file specifying initial core bins')
     refine_parser.add_argument('refined_bin_file', help='output file specifying refined bins')
 
-    refine_parser.add_argument('--gc_dist_per', help='width of GC distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
-    refine_parser.add_argument('--td_dist_per', help='width of TD distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
-    refine_parser.add_argument('--cov_dist_per', help='width of coverage distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
+    refine_parser.add_argument('--gc_dist_per', help='width of GC distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=99, metavar='')
+    refine_parser.add_argument('--td_dist_per', help='width of TD distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=99, metavar='')
+    refine_parser.add_argument('--cov_dist_per', help='width of coverage distribution for defining neighbours; integer between 0 and 100', type=int, choices=xrange(0, 101), default=99, metavar='')
 
-    refine_parser.add_argument('-s', '--min_seq_len', help='filter out unbinned contigs below this length', type=int, default=5000)
+    refine_parser.add_argument('--min_refine_len', help='ignore contigs below this length', type=int, default=5000)
 
     refine_parser.add_argument('-t', '--threads', help='number of worker threads', type=int, default=1)
     refine_parser.add_argument('-q', '--quiet', help='suppress output', action='store_true')
@@ -148,14 +148,14 @@ if __name__ == '__main__':
     bin_wf_parser.add_argument('-e', '--max_edit_dist', help='maximum edit distance as percentage of read length', type=float, default=0.02)
     bin_wf_parser.add_argument('--improper_pairs', dest='bAllowImproperPairs', action="store_true", default=False, help="use improperly paired reads in coverage calculation")
     bin_wf_parser.add_argument('-c', '--coverage_type', choices=['mean', 'trimmed_mean'], help='type of coverage to calculate', default='trimmed_mean')
-    bin_wf_parser.add_argument('--build_dist_per', help='width of distribution for building cores; integer between 0 and 100', type=int, choices=xrange(0, 101), default=90, metavar='')
+    bin_wf_parser.add_argument('--build_dist_per', help='width of distribution for building cores; integer between 0 and 100', type=int, choices=xrange(0, 101), default=80, metavar='')
     bin_wf_parser.add_argument('--merge_dist_per', help='width of distributions for merging cores; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
-    bin_wf_parser.add_argument('--min_core_seq_len', help='minimum length of contigs for a bore', type=int, default=10000)
+    bin_wf_parser.add_argument('--min_core_len', help='minimum length of contigs for a core', type=int, default=10000)
     bin_wf_parser.add_argument('--min_core_bin_size', help='minimum base pairs to retain a core bin', type=int, default=100000)
-    bin_wf_parser.add_argument('--gc_dist_per', help='width of GC distribution for defining neighbours during refinement; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
-    bin_wf_parser.add_argument('--td_dist_per', help='width of TD distribution for defining neighbours during refinement; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
-    bin_wf_parser.add_argument('--cov_dist_per', help='width of coverage distribution for defining neighbours during refinement; integer between 0 and 100', type=int, choices=xrange(0, 101), default=98, metavar='')
-    bin_wf_parser.add_argument('--min_refine_seq_len', help='filter out unbinned contigs below this length', type=int, default=5000)
+    bin_wf_parser.add_argument('--gc_dist_per', help='width of GC distribution for defining neighbours during refinement; integer between 0 and 100', type=int, choices=xrange(0, 101), default=99, metavar='')
+    bin_wf_parser.add_argument('--td_dist_per', help='width of TD distribution for defining neighbours during refinement; integer between 0 and 100', type=int, choices=xrange(0, 101), default=99, metavar='')
+    bin_wf_parser.add_argument('--cov_dist_per', help='width of coverage distribution for defining neighbours during refinement; integer between 0 and 100', type=int, choices=xrange(0, 101), default=99, metavar='')
+    bin_wf_parser.add_argument('--min_refine_len', help='ignore contigs below this length', type=int, default=5000)
     bin_wf_parser.add_argument('-t', '--threads', help='number of worker threads', type=int, default=1)
     bin_wf_parser.add_argument('-q', '--quiet', help='suppress output', action='store_true')
 
