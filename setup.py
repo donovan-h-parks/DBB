@@ -2,7 +2,7 @@ from distutils.core import setup
 
 setup(
     name='dbb',
-    version='1.0.1',
+    version='1.0.2',
     author='Donovan Parks',
     author_email='donovan.parks@gmail.com',
     packages=['dbb', 'dbb.plots'],
