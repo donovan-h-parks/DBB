@@ -60,7 +60,7 @@ def readContigIdtoBinId(binningFile):
         f.readline()  # header line
         for line in f:
             lineSplit = line.split('\t')
-            binId = Greedy.UNBINNED if lineSplit[1] == 'unbinned' else int(lineSplit[1])
+            binId = Greedy.UNBINNED if lineSplit[1] == 'unbinned' else lineSplit[1]
             contigIdToBinId[lineSplit[0]] = binId
 
     return contigIdToBinId
@@ -119,7 +119,7 @@ def reportBins(binningFile, contigs, argStr):
     fout.write('Contig Id\tBin Id\tLength\tGC\tCoverage\n')
     for binId, contigs in cores.iteritems():
         for contig in contigs:
-            fout.write(contig.contigId + '\t%d\t%d\t%.3f\t%.3f\n' % (binId, contig.length, contig.GC, contig.coverage))
+            fout.write(contig.contigId + '\t%s\t%d\t%.3f\t%.3f\n' % (binId, contig.length, contig.GC, contig.coverage))
 
     for contig in unbinnedContigs:
         fout.write(contig.contigId + '\t%s\t%d\t%.3f\t%.3f\n' % ('unbinned', contig.length, contig.GC, contig.coverage))
@@ -141,7 +141,7 @@ class Contig(object):
         self.tetraSig = tetraSig
 
     def __str__(self):
-        return 'Contig id: %s, bin id: %d, length: %d, GC: %.3f, coverage: %.1f' % (self.contigId, self.binId, self.length, self.GC, self.coverage)
+        return 'Contig id: %s, bin id: %s, length: %d, GC: %.3f, coverage: %.1f' % (self.contigId, self.binId, self.length, self.GC, self.coverage)
 
 
 class Core(object):

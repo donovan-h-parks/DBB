@@ -28,6 +28,7 @@ __status__ = 'Development'
 
 import os
 import sys
+import re
 import logging
 from collections import defaultdict
 
@@ -155,8 +156,7 @@ class DistributionBinner(object):
             if not binFile.endswith('.fna'):
                 continue
 
-            binId = binFile[0:binFile.find('.')]
-            binId = binId[binId.find('_') + 1:]
+            binId = binFile[0:binFile.rfind('.')]
 
             seqs = readFasta(os.path.join(args.bin_dir, binFile))
             for seqId in seqs.keys():
@@ -172,7 +172,9 @@ class DistributionBinner(object):
                 lineSplit = line.split('\t')
 
                 scaffoldId = lineSplit[0]
-                scaffoldId = scaffoldId[0:scaffoldId.rfind('_')]
+                match = re.search('_c[0-9]*$', scaffoldId)
+                if match:
+                    scaffoldId = scaffoldId[0:match.start()]
 
                 fout.write(lineSplit[0])
                 fout.write('\t' + seqIdToBinId.get(scaffoldId, 'unbinned'))
@@ -198,7 +200,7 @@ class DistributionBinner(object):
             if not binFile.endswith('fna'):
                 continue
 
-            binId = binFile[0:binFile.find('.')]
+            binId = binFile[0:binFile.rfind('.')]
 
             seqs = readFasta(os.path.join(args.bin_dir, binFile))
             for seqId in seqs.keys():
@@ -250,7 +252,10 @@ class DistributionBinner(object):
         self.logger.info('')
 
         unbinned = Unbinned()
-        unbinned.run(args.preprocess_dir, args.binning_file, args.gc_dist_per, args.td_dist_per, args.cov_dist_per, args.min_scaffold_len, args.min_contig_len, args.output_file)
+        unbinned.run(args.preprocess_dir, args.binning_file,
+                     args.gc_dist_per, args.td_dist_per, args.cov_dist_per,
+                     args.min_scaffold_len, args.min_contig_len,
+                     args.all_scaffolds, args.output_file)
 
         self.timeKeeper.printTimeStamp()
 

@@ -131,10 +131,8 @@ class Compare(object):
                     continue
 
                 tdDistance = genomicSig.distance(contig.tetraSig, bin.tetraSig)
-                print binId, tdDistance
                 if not distributions.witinDistTD(tdDistance, contig):
                     continue
-                print tdDistance
 
                 gcDistance = distributions.gcDistance(contig, bin)
                 covDistance = distributions.covDistance(contig, bin)
@@ -151,5 +149,4 @@ class Compare(object):
                                                                     str(closestBin[0]), str(closestBin[1]), str(closestBin[2]))
 
         print ''
-        print 'Bin Id = %d, mean GC = %.1f, mean coverage = %.1f, mean delta tetra = %.2f' % (queryBinId, queryBin.GC * 100, queryBin.coverage, meanDeltaTetra)
-
+        print 'Bin Id = %s, mean GC = %.1f, mean coverage = %.1f, mean delta tetra = %.2f' % (queryBinId, queryBin.GC * 100, queryBin.coverage, meanDeltaTetra)
