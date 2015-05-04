@@ -314,7 +314,6 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - tetra_pca] PCA plot of tetranucleotide signatures.')
         self.logger.info('*******************************************************************************')
-        self.logger.info('')
 
         if not os.path.exists(args.plot_folder):
             os.makedirs(args.plot_folder)
@@ -334,7 +333,7 @@ class DistributionBinner(object):
 
         self.logger.info('  Creating PCA plot of tetranucleotide signatures.')
         plot = TetraPcaPlot(args)
-        plot.plot(args.preprocess_dir, args.bin_dir, seqIds, pc, variance, args.min_seq_len, args.min_core_len, not args.no_bounding_box, not args.no_labels)
+        plot.plot(args.preprocess_dir, args.bin_dir, seqIds, pc, variance, args.min_seq_len, args.min_core_len, not args.hide_bounding_boxes, not args.hide_labels)
 
         outputFile = os.path.join(args.plot_folder, 'tetra_pca_plot.' + args.image_type)
         plot.savePlot(outputFile, dpi=args.dpi)
@@ -352,8 +351,8 @@ class DistributionBinner(object):
                 if not binFile.endswith('.fna'):
                     continue
 
-                binId = binFile[0:binFile.find('.')]
-                plot.plot(args.preprocess_dir, args.bin_dir, seqIds, pc, variance, args.min_seq_len, args.min_core_len, not args.no_bounding_box, not args.no_labels, binId)
+                binId = binFile[0:binFile.rfind('.')]
+                plot.plot(args.preprocess_dir, args.bin_dir, seqIds, pc, variance, args.min_seq_len, args.min_core_len, not args.hide_bounding_boxes, not args.hide_labels, binId)
 
                 outputFile = os.path.join(args.plot_folder, 'tetra_pca_plot.' + str(binId) + '.' + args.image_type)
                 plot.savePlot(outputFile, dpi=args.dpi)
@@ -366,7 +365,6 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - gc_cov] Plot GC vs coverage.')
         self.logger.info('*******************************************************************************')
-        self.logger.info('')
 
         if not os.path.exists(args.plot_folder):
             os.makedirs(args.plot_folder)
@@ -409,7 +407,7 @@ class DistributionBinner(object):
                 if binFile.endswith('.fna'):
                     continue
 
-                binId = binFile[0:binFile.find('.')]
+                binId = binFile[0:binFile.rfind('.')]
                 plot.plot(args.preprocess_dir, args.bin_dir, args.min_seq_len, args.min_core_len, args.coverage_linear, not args.hide_bounding_boxes, not args.hide_labels, None, binId)
 
                 outputFile = os.path.join(args.plot_folder, 'gc_cov_plot.' + str(binId) + '.' + args.image_type)

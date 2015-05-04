@@ -53,7 +53,7 @@ class TetraPcaPlot(AbstractPlot):
             if not binFile.endswith('.fna'):
                 continue
 
-            binId = binFile[0:binFile.find('.')]
+            binId = binFile[0:binFile.rfind('.')]
 
             seqs = readFasta(os.path.join(binDir, binFile))
             for seqId in seqs.keys():
