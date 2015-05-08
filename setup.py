@@ -2,12 +2,12 @@ from distutils.core import setup
 
 setup(
     name='dbb',
-    version='1.0.4',
+    version='1.0.5',
     author='Donovan Parks',
     author_email='donovan.parks@gmail.com',
     packages=['dbb', 'dbb.plots'],
     scripts=['bin/dbb'],
-    package_data={'': ['data/*.txt']},
+    package_data={'dbb': ['data/*.txt']},
     url='http://pypi.python.org/pypi/dbb/',
     license='GPL3',
     description='Bin scaffolds into population genomes.',

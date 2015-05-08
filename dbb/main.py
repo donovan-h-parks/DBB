@@ -147,7 +147,6 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - bin_file] Creating file indicating bin assignments.')
         self.logger.info('*******************************************************************************')
-        self.logger.info('')
 
         # get bin for each scaffold
         binFiles = os.listdir(args.bin_dir)
@@ -191,7 +190,6 @@ class DistributionBinner(object):
         self.logger.info('*******************************************************************************')
         self.logger.info(' [DBB - bin_stats] Creating file with statistics for binned scaffolds.')
         self.logger.info('*******************************************************************************')
-        self.logger.info('')
 
         # get bin for each scaffold
         binFiles = os.listdir(args.bin_dir)
