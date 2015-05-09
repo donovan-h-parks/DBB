@@ -24,10 +24,10 @@ from common import checkFileExists
 
 
 def readDistributions(preprocessDir, gcDistPer, tdDistPer, covDistPer):
-    gcDistFile = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'data', 'gc_dist.txt')
+    gcDistFile = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data', 'gc_dist.txt')
     checkFileExists(gcDistFile)
 
-    tdDistFile = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'data', 'td_dist.txt')
+    tdDistFile = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data', 'td_dist.txt')
     checkFileExists(tdDistFile)
 
     coverageDistFile = os.path.join(preprocessDir, 'coverage_dist.txt')
