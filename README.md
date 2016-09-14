@@ -1,3 +1,5 @@
+[This is deprecated software. I recommend using MetaBAT or one of the other fully developed binning methods.]
+
 # Distribution-based Binner (DBB)
 
 Cluster scaffolds from a single metagenomic sample into population genomes using a distribution-based binning approach.
